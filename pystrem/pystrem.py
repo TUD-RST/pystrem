@@ -1,6 +1,6 @@
 #
 #    Copyright (C) 2017
-#    by Christoph Steiger, TODO: add email here
+#    by Christoph Steiger, christoph.steiger@mailbox.tu-dresden.de
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@ import numpy as np
 import collections
 import math
 import warnings
-from typing import Iterable, Dict, IO
+from typing import Iterable, IO, Union, Tuple
 import csv
 
 
@@ -29,36 +29,26 @@ class FsrModel(object):
 
     FsrModel contains all necessary information to simulate with
     FSR models. It is intended to be used exactly as a transfer function
-    would be. TODO: maybe explain a bit more?
-
-    Attributes:
-        show_warnings: A boolean indicating whether warnings should be used.
+    would be. TODO: expand this
     """
 
     def __init__(self, y: Iterable[float], t: Iterable[float],
-                 u: Iterable[float]=None, max_delta: float=0.01,
-                 show_warnings: bool=True) -> None:
-        """Inits FsrModel from given parameters.
+                 u: Iterable[float]=None) -> None:
+        """Creates FsrModel from given parameters.
 
-        u must be a step and y the resulting step response of the system,
-        otherwise simulation accuracy will be bad. The response will be
-        shortened to only show the dynamic range of the system. What still is
-        considered dynamic and what not can be influenced by max_delta.
-
+        u should be a step, otherwise simulation accuracy will be bad. y is
+        the resulting step response of the system to input u.
+        
         Args:
             y: Step response of the system.
             t: time vector.
             u (Optional): Input which was given to the system to create y. 
-                Defaults to a step of height one starting at index zero.
-            max_delta (Optional): Used to determine at what point y is to 
-                be considered static. At the point where response last differs 
-                more than max_delta in % relative to static value, it is
-                considered static. Defaults to 0.01.
-            show_warnings (Optional): Indicates whether to show warnings.
-                Defaults to True.
+                Defaults to a step of amplitude one starting at time zero.
+
+        Raises:
+            TypeError: if argument is of wrong type
+            ValueError: if invalid argument is given
         """
-        
-        self.show_warnings = show_warnings
         try:
             self._y = np.array(y, dtype=float)
         except Exception as e:
@@ -69,7 +59,7 @@ class FsrModel(object):
         except Exception as e:
             msg = "Argument t cannot be converted to numpy array."
             raise type(e)(msg) from None
-            
+
         if u is not None:
             try:
                 self._u = np.array(u, dtype=float)
@@ -77,22 +67,23 @@ class FsrModel(object):
                 msg = "Argument u cannot be converted to numpy array."
                 raise type(e)(msg) from None
         else:
-            # default: step with height 1
+            # default: step with amplitude 1
             self._u = np.ones(len(self._t))
-        # thrown Errors: ValueError, TypeError
+        if len(self._u) != len(self._t):
+            msg = "t and u don't have the same dimensions."
+            raise ValueError(msg)
+	# TODO: check for constant dt
         idx = self._find_step_in_u(self._u)
         self._y = self._y[idx:]
         self._u = self._u[idx:]
-        # considered step height for all purposes, important for calculation
         self._u_0 = self._u[-1]
-        # difference in percent to static value to consider response done
-        self._max_delta = max_delta
-        self._end_of_dynamic, self._static_val = self._find_dynamic_range(
-            self._y, t)
-        self._y = self._y[:self._end_of_dynamic]
-        self._u = self._u[:self._end_of_dynamic]
-        self._t = self._t[:self._end_of_dynamic]
-        self._dt = self._t[1] - self._t[0]  # model step size
+        # considered step amplitude for all purposes, important for calculation
+        self._dt = self._t[1] - self._t[0]
+        # model step size
+        self._sim_u = []
+        # used in method simulate_step
+        self._sim_du = []
+        # used in method simulate_step
 
     def _find_step_in_u(self, u: Iterable[float]) -> int:
         """ Looks for the index where the jump in _u occurs."""
@@ -102,29 +93,42 @@ class FsrModel(object):
                 return i
         return 0
 
-    def _find_dynamic_range(
-            self, y: Iterable[float], t: Iterable[float]) -> (int, float):
-        """ Looks for the end index of the dynamic phase of a step response."""
-        static_val = y[-1]
+    def crop_to_dynamic_range(self, delta: float=0.01):
+        """Crops the underlying response according to delta.
+        
+        This method crops y, t and u to show only the dynamics of the system.
+        Should speed up simulation, at the cost of a slight accuracy loss.
+        
+        Args:
+            delta: Used to determine at what point model step response is to 
+                be considered static. At the point where response last differs 
+                more than delta in % relative to static value, it is
+                considered static. Defaults to 0.01.
+        """
+        static_val = self._y[-1]
         if math.isclose(static_val, 0):
-            static_val = max(y)
-        for i in range(1, len(t)):
-            if i == (len(t) - 1):
+            static_val = max(self._y)
+        for i in range(1, len(self._t)):
+            if i == (len(self._t) - 1):
                 msg = ("Could not detect any dynamic in step response. "
-                       "This might mean your system is static or max_delta "
+                       "This might mean your system is static or delta "
                        "is set too high.")
                 warnings.warn(msg, RuntimeWarning)
-                return len(y), static_val
+
             val = self._y[-i]
             current_delta = (abs((val - static_val) / static_val)) * 100.
-            if (current_delta > self._max_delta):
-                if ((i <= 1) or (i < (0.01 * len(t)))) and self.show_warnings:
+            if (current_delta > delta):
+                if ((i <= 1) or (i < (0.01 * len(self._t)))):
                     msg = ("End of dynamic is very close to end of "
                            "step response.\nYour system might be unstable or "
                            "your step response does not show the full "
                            "dynamics of your system.")
                     warnings.warn(msg, RuntimeWarning)
-                return len(y) - i + 1, static_val
+                crop_idx = len(self._y) - i + 1
+                self._y = self._y[:crop_idx]
+                self._u = self._u[:crop_idx]
+                self._t = self._t[:crop_idx]
+                return
 
     def _validate_input(
             self, t: Iterable[float], u: Iterable[float]) -> (bool, str):
@@ -139,74 +143,6 @@ class FsrModel(object):
                 return False, msg
         return True, ""
 
-    def step_response(self, t: Iterable[float]=None,
-                      height: float=1) -> (Iterable[float], Iterable[float]):
-        """Simulates the the step response of this system.
-
-        Args:
-            t: Time vector.
-            height (Optional): Step height. Defaults to 1.
-
-        Returns:
-            A touple (t, y) of two iterables. t is the time vector used for
-            simulation. y is the step response.
-
-        Raises:
-            ValueError: The input arguments are not compatible with each other
-                or the system.
-        """
-        if t is not None:
-            u = height * np.ones(len(t))
-        else:
-            u = height * np.ones(len(self._t))
-            t = self._t
-        t, y = self.forced_response(t, u)
-        return t, y
-
-    def forced_response(self, t: Iterable[float], u: Iterable[float]) \
-            -> (Iterable[float], Iterable[float]):
-        """Simulates the response of this system to given input.
-
-        Args:
-            t: Time vector.
-            u: Input vector.
-
-        Returns:
-            A touple (t, y) of two iterables. t is the time vector used for
-            simulation. y is the step response.
-
-        Raises:
-            ValueError: if input arguments are not compatible with each other
-                or the system.
-        """
-        ok, msg = self._validate_input(t, u)
-        if not ok:
-            raise ValueError(msg)
-        c_buf = collections.deque(
-            np.zeros(self._end_of_dynamic), self._end_of_dynamic)
-        t_idx = 0
-        y = np.zeros(len(t))
-        out_of_buf_value = 0
-        # Calculates output according to following formula:
-        # y[k] = (u[k]-u[k-1])*_y[1] + (u[k-1]-u[k-2])*_y[2] + ...
-        for _ in t:
-            if t_idx != 0:
-                du_rel = (u[t_idx] - u[t_idx - 1]) / self._u_0
-            else:
-                du_rel = u[t_idx] / self._u_0
-            # Whenever we add a value to our buffer we need to remember the
-            # ones thrown out of it.
-            if c_buf[0] != 0:
-                out_of_buf_value += c_buf[0] * self._y[-1]
-            c_buf.append(du_rel)
-            step_out = 0
-            for buf_pos in range(len(c_buf)):
-                # buffer is filled from right side
-                step_out += c_buf[-(buf_pos + 1)] * self._y[buf_pos]
-            y[t_idx] = step_out + out_of_buf_value
-            t_idx += 1
-        return t, y
-
     def _validate_model_compatibility(self, other) -> (bool, str):
         """ Validates compatibility of two models."""
         delta_time = other._t[1] - other._t[0]
@@ -215,208 +151,363 @@ class FsrModel(object):
         else:
             return True, ""
 
-    def __add__(self, other: 'FsrModel') -> 'FsrModel':
+    def feedback(self, other: 'FsrModel', sign: int=-1) -> 'FsrModel':
+        """Returns the feedback connection of this system and other.
+
+        This is a wrapper for FsrModels __truediv__ method. This system is 
+        in forwards direction and other in backwards direction. Both systems 
+        timebases must match. Returned system will be normalized to a 
+        step of amplitude 1.
+    
+        Examples:
+            ``sys3 = sys1.feedback(sys2)  # same as sys1 / sys2``
+    
+        Args:
+            other: Other system.
+            sign (Optional): Sign of feedback. -1 indicates a negative feedback,
+                1 a positive feedback. Defaults to -1.
+    
+        Returns:
+            The resulting system.
+    
+        Raises:
+            TypeError: if parameter type is not supported
+        """
+        if sign > 0:
+            return self / (-1 * other)
+        else:
+            return self / other
+
+    def __add__(self, other: Union['FsrModel', int, float]) -> 'FsrModel':
 
         if isinstance(other, FsrModel):
             ok, msg = self._validate_model_compatibility(other)
             if not ok:
                 raise ValueError(msg)
-            # TODO: accessing privates here is not nice, use get_model_info
+            other_y, other_u, other_t = other.get_model_info()
+            other_u_0 = other_u[-1]
             y1 = self._y / self._u_0
-            y2 = other._y / other._u_0
-            delta = self._max_delta if (
-                self._max_delta <= other._max_delta) else other._max_delta
-            if len(self._t) > len(other._t):
+            y2 = other_y / other_u_0
+            if len(self._t) > len(other_t):
                 y = np.zeros(len(self._t))
                 y2_static = y2[-1]
                 for i in range(len(y2)):
                     y[i] = y1[i] + y2[i]
                 for i in range(len(y2), len(y1)):
                     y[i] = y1[i] + y2_static
-                return FsrModel(y, t=self._t, max_delta=delta,
-                                show_warnings=False)
+                return FsrModel(y, t=self._t)
             else:
-                y = np.zeros(len(other._t))
+                y = np.zeros(len(other_t))
                 y1_static = y1[-1]
                 for i in range(len(y1)):
                     y[i] = y1[i] + y2[i]
                 for i in range(len(y1), len(y2)):
                     y[i] = y1_static + y2[i]
-                return FsrModel(y, t=other._t, max_delta=delta,
-                                show_warnings=False)
+                return FsrModel(y, t=other_t)
+        elif isinstance(other, int) or isinstance(other, float):
+            new_y = np.zeros(len(self._y))
+            for i in range(len(new_y)):
+                new_y[i] = self._y[i] + other
+            return FsrModel(new_y, t=self._t, u=self._u)
         else:
-            msg = ("Operator + is only supported for objects of type "
-                   "<class 'FsrModel'>, got type %s." % (
-                       str(type(other))))
+            msg = ("Unsupported type %s." % (
+                str(type(other))))
             raise TypeError(msg)
 
-    def __sub__(self, other: 'FsrModel') -> 'FsrModel':
+    def __radd__(self, other: Union['FsrModel', int, float]):
+
+        return self + other
+
+    def __sub__(self, other: Union['FsrModel', int, float]) -> 'FsrModel':
 
         if isinstance(other, FsrModel):
             ok, msg = self._validate_model_compatibility(other)
             if not ok:
                 raise ValueError(msg)
-            # TODO: accessing privates here is not nice, use get_model_info
+            other_y, other_u, other_t = other.get_model_info()
+            other_u_0 = other_u[-1]
             y1 = self._y / self._u_0
-            y2 = other._y / other._u_0
-            delta = self._max_delta if (
-                self._max_delta <= other._max_delta) else other._max_delta
-            if len(self._t) > len(other._t):
+            y2 = other_y / other_u_0
+            if len(self._t) > len(other_t):
                 y = np.zeros(len(self._t))
                 y2_static = y2[-1]
                 for i in range(len(y2)):
                     y[i] = y1[i] - y2[i]
                 for i in range(len(y2), len(y1)):
                     y[i] = y1[i] - y2_static
-                return FsrModel(y, t=self._t, max_delta=delta,
-                                show_warnings=False)
+                return FsrModel(y, t=self._t)
             else:
-                y = np.zeros(len(other._t))
+                y = np.zeros(len(other_t))
                 y1_static = y1[-1]
                 for i in range(len(y1)):
                     y[i] = y1[i] - y2[i]
                 for i in range(len(y1), len(y2)):
                     y[i] = y1_static - y2[i]
-                return FsrModel(y, t=other._t, max_delta=delta,
-                                show_warnings=False)
+                return FsrModel(y, t=other_t)
+        elif isinstance(other, int) or isinstance(other, float):
+            new_y = np.zeros(len(self._y))
+            for i in range(len(new_y)):
+                new_y[i] = self._y[i] - other
+            return FsrModel(new_y, t=self._t, u=self._u)
         else:
-            msg = ("Operator - is only supported for objects of type "
-                   "<class 'FsrModel'>, got type %s." % (
-                       str(type(other))))
+            msg = ("Unsupported type %s." % (
+                str(type(other))))
             raise TypeError(msg)
 
-    def __mul__(self, other: 'FsrModel') -> 'FsrModel':
+    def __rsub__(self, other: Union['FsrModel', int, float]) -> 'FsrModel':
+
+        return -1 * self + other
+
+    def __mul__(self, other: Union['FsrModel', int, float]) -> 'FsrModel':
 
         if isinstance(other, FsrModel):
             ok, msg = self._validate_model_compatibility(other)
             if not ok:
                 raise ValueError(msg)
             y1 = self._y / self._u_0
-            # TODO: accessing privates here is not nice, use get_model_info
-            delta = self._max_delta if (
-                self._max_delta <= other._max_delta) else other._max_delta
+            _, _, other_t = other.get_model_info()
             time = self._dt * \
-                range(self._end_of_dynamic + other._end_of_dynamic)
+                range(len(self._t) + len(other_t))
             u = np.zeros(len(time))
             for i in range(len(y1)):
                 u[i] = y1[i]
             for i in range(len(y1), len(u)):
                 u[i] = y1[-1]
-            _, y2 = other.forced_response(time, u)
-            return FsrModel(y2, t=time, max_delta=delta, show_warnings=False)
+            _, y2 = forced_response(other, time, u)
+            return FsrModel(y2, t=time)
+        elif isinstance(other, int) or isinstance(other, float):
+            new_y = np.zeros(len(self._y))
+            for i in range(len(new_y)):
+                new_y[i] = self._y[i] * other
+            return FsrModel(new_y, t=self._t, u=self._u)
         else:
-            msg = ("Operator * is only supported for objects of type "
-                   "<class 'FsrModel'>, got type %s." % (
-                       str(type(other))))
+            msg = ("Unsupported type %s." % (
+                str(type(other))))
             raise TypeError(msg)
 
-    def __truediv__(self, other: 'FsrModel') -> 'FsrModel':
+    def __rmul__(self, other: Union['FsrModel', int, float]) -> 'FsrModel':
+
+        return self * other
+
+    def __truediv__(self, other: Union['FsrModel', int, float]) -> 'FsrModel':
 
         if isinstance(other, FsrModel):
             ok, msg = self._validate_model_compatibility(other)
             if not ok:
                 raise ValueError(msg)
             u_tilde = self._y / self._u_0
-            # Calculate 1 + G1*G2
-            # TODO: accessing privates here is not nice, use get_model_info
-            p = (self * other)._y
-            for i in range(len(p)):
-                p[i] += 1
+            p = (1 + (self * other))
+            p_out, _, _ = p.get_model_info()
             # This is just a wild guess.
             # TODO: Find a way to calculate exact size or guess it reliably.
-            sim_len = len(self._y) + len(p)
-            y = np.zeros(sim_len)
+            length = len(self._y) + len(p_out)
+            y = np.zeros(length)
             y[0] = 0
             # Calculate new model output. Formula is as follows:
-            # y[k] = y[k-1] + (u_tilde - (y[k-1]-y[k-2])*p[2] - (y[k-2]-y[k-3])*
-            #        p[3] - ...) / p[1]
-            for i in range(1, sim_len):
+            # y[k] = y[k-1] + (u_tilde - (y[k-1]-y[k-2])*p_out[2] -
+            # (y[k-2]-y[k-3])*p_out[3] - ...) / p_out[1]
+            for i in range(1, length):
                 y[i] = y[i - 1]
                 if i < len(u_tilde):
                     right_side = u_tilde[i]
                 else:
                     right_side = u_tilde[-1]
                 for j in range(1, i):
-                    if j < len(p) - 1:
-                        right_side -= p[j + 1] / p[1] * \
+                    if j < len(p_out) - 1:
+                        right_side -= p_out[j + 1] / p_out[1] * \
                             (y[i - j] - y[i - j - 1])
                     else:
-                        right_side -= p[-1] / p[1] * (y[i - j] - y[i - j - 1])
+                        right_side -= p_out[-1] / p_out[1] * \
+                            (y[i - j] - y[i - j - 1])
                 y[i] += right_side
-            delta = self._max_delta if (
-                self._max_delta <= other._max_delta) else other._max_delta
-            time = self._dt * np.arange(sim_len)
-            return FsrModel(y=y, t=time, max_delta=delta, show_warnings=False)
+            time = self._dt * np.arange(length)
+            return FsrModel(y=y, t=time)
+        elif isinstance(other, int) or isinstance(other, float):
+            sys2 = FsrModel(np.array([0, other]),
+                            t=np.array([0, self._dt]))
+            return self / sys2
         else:
-            msg = ("Operator / is only supported for objects of type "
-                   "<class 'FsrModel'>, got type %s." % (
-                       str(type(other))))
+            msg = ("Unsupported type %s." % (
+                str(type(other))))
             raise TypeError(msg)
 
-    def get_model_info(self) -> Dict:
-        """Gets info on the model.
+    def __rtruediv__(self, other) -> 'FsrModel':
         
-        Returns a dictionary with relevant information stored in the model.
+        sys2 = FsrModel(np.array([0, other]), t=np.array([0, self._dt]))
+        return sys2 / self
+
+    def simulate_step(self, u: float) -> float:
+        """Simulate a single step for input signal value u.
         
-        Returns:
-            A dictionary with following entries
+        This method is intended to be used for integration in simulation
+        algorithms. Make sure simulation time step is equal to model
+        time step. Internally a memory of last inputs is created, you can clear
+        it by calling the clear_sim_mem method of this instance if you want to 
+        use a single model instance for multiple simulations.
+        
+        Args:
+            u: Input signal value.
             
-            * 'y' (Iterable): Step response of system.
-            * 'u' (Iterable): Input to create y.
-            * 't' (Iterable): Model timebase.
-            * 'delta' (float): Model parameter delta_max.
+        Raises:
+            TypeError: if input argument is of wrong type
+        """
+        if len(self._sim_u) == 0:
+            self._sim_du.append(u)
+        else:
+            last_u = self._sim_u[-1]
+            self._sim_du.append(u-last_u)
+        self._sim_u.append(u)
+        out = 0
+        for i in range(len(self._sim_du)):
+            if i < len(self._y):
+                out += self._sim_du[-i-1] * self._y[i]
+            else:
+                out += self._sim_du[-i-1] * self._y[-1]
+        return out
+    
+    def clear_sim_mem(self) -> None:
+        """Clears simulation memory.
+        
+        Use this method if you want use this model instance for multiple 
+        simulations with simulate_step method. This makes sure there is nothing
+        left from the last simulation.
+        """
+        self._sim_du = []
+        self._sim_u = []
+
+    def get_model_info(self) \
+            -> Tuple[Iterable[float], Iterable[float], Iterable[float]]:
+        """Gets info on the model.
+
+        Returns a tuple with relevant information stored in the model.
+
+        Returns:
+            A tuple with following entries
+
+            * y (Iterable): Step response of system.
+            * u (Iterable): Input to create y.
+            * t (Iterable): Model timebase.
         """
         # array[:] creates a copy of that array. We don't want to return
         # references here.
-        return {"y": self._y[:], "u": self._u[:], "t": self._t[:],
-                "delta": self._max_delta}
+        return (self._y[:], self._u[:], self._t[:])
 
 
-def parallel(sys1: FsrModel, sys2: FsrModel, neg: bool=False) -> FsrModel:
+def step_response(sys: FsrModel, t: Iterable[float]=None,
+                  amplitude: float=1) -> Tuple[Iterable[float], Iterable[float]]:
+    """Simulates the the step response of given system.
+
+    Args:
+        sys: System to simulate.
+        t: Time vector.
+        amplitude (Optional): Step amplitude. Defaults to 1.
+
+    Returns:
+        A touple (t, y) of two iterables. t is the time vector used for
+        simulation. y is the step response.
+
+    Raises:
+        ValueError: if input arguments are not compatible with each other
+            or the system.
+        TypeError: if argument sys is of wrong type.
+    """
+    if t is not None:
+        u = amplitude * np.ones(len(t))
+    else:
+        _, _, t = sys.get_model_info()
+        u = amplitude * np.ones(len(t))
+    t, y = forced_response(sys, t, u)
+    return t, y
+
+def forced_response(sys: FsrModel, t: Iterable[float], u: Iterable[float]) \
+        -> Tuple[Iterable[float], Iterable[float]]:
+    """Simulates the response of this system to given input.
+
+    Args:
+        t: Time vector.
+        u: Input vector.
+
+    Returns:
+        A touple (t, y) of two iterables. t is the time vector used for
+        simulation. y is the step response.
+
+    Raises:
+        ValueError: if input arguments are not compatible with each other
+            or the system.
+        TypeError: if argument sys is of wrong type.
+    """
+    try:
+        sys_y, sys_u, sys_t = sys.get_model_info()
+    except:
+        msg = ("Unsupported type %s for parameter sys." % (
+            str(type(sys))))
+        raise TypeError(msg)
+    sys_u_0 = sys_u[-1]
+    ok, msg = sys._validate_input(t, u)
+    if not ok:
+        raise ValueError(msg)
+    c_buf = collections.deque(
+        np.zeros(len(sys_t)), len(sys_t))
+    t_idx = 0
+    y = np.zeros(len(t))
+    out_of_buf_value = 0
+    # Calculates output according to following formula:
+    # y[k] = (u[k]-u[k-1])*_y[1] + (u[k-1]-u[k-2])*_y[2] + ...
+    for _ in t:
+        if t_idx != 0:
+            du_rel = (u[t_idx] - u[t_idx - 1]) / sys_u_0
+        else:
+            du_rel = u[t_idx] / sys_u_0
+        # Whenever we add a value to our buffer we need to remember the
+        # ones thrown out of it.
+        if c_buf[0] != 0:
+            out_of_buf_value += c_buf[0] * sys_y[-1]
+        c_buf.append(du_rel)
+        step_out = 0
+        for buf_pos in range(len(c_buf)):
+            # buffer is filled from right side
+            step_out += c_buf[-(buf_pos + 1)] * sys_y[buf_pos]
+        y[t_idx] = step_out + out_of_buf_value
+        t_idx += 1
+    return t, y
+
+def parallel(sys1: FsrModel, sys2: FsrModel, sign: int=1) -> FsrModel:
     """Returns the parallel connection of sys1 and sys2.
 
     This is a wrapper for FsrModels __add__ and __sub__ methods.
-    Both systems timebases must match. Returned systems max_delta is
-    the smaller of the two connected systems. Returned system will be
-    normalized to a step of height 1. If subtraction instead of addition is
-    wanted, use neg=True. Warnings for the returned system are turned off.
+    Both systems timebases must match. Returned system will be
+    normalized to a step of amplitude 1. If subtraction instead of addition is
+    wanted, use sign=-1.
 
     Examples: 
         ``sys3 = parallel(sys1, sys2)  # same as sys3 = sys1 + sys2``
 
-        ``sys3 = parallel(sys1, sys2, True)  # same as sys3 = sys1 - sys2``
+        ``sys3 = parallel(sys1, sys2, -1)  # same as sys3 = sys1 - sys2``
 
     Args:
         sys1: First system.
         sys2: Second system.
-        neg (Optional): When True, returns sys1 - sys2 instead of sys1 + sys2.
-            Defaults to False.
+        sign (Optional): Sign of parallel connection. Returns sys1 - sys2 if
+            negative. Defaults to 1.
 
     Returns:
         The resulting system.
 
     Raises:
-        TypeError: if input type is not supported.
+        TypeError: if parameter type is not supported
     """
-    try:
-        if neg:
-            return sys1 - sys2
-        else:
-            return sys1 + sys2
-    except NotImplementedError:
-        msg = ("parallel is only supported for objects of type "
-               "<class 'FsrModel'>, got types %s and %s." % (
-                   str(type(sys1)), str(type(sys2))))
-        raise TypeError(msg)
+
+    if sign < 0:
+        return sys1 - sys2
+    else:
+        return sys1 + sys2
 
 
 def series(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
     """Returns the serial connection of sys1 and sys2.
 
     This is a wrapper for FsrModels __mul__ method. Both systems timebases must
-    match. Returned systems max_delta is the smaller of the two connected ones.
-    Returned system will be normalized to a step of height 1. Warnings for the
-    returned system are turned off.
+    match. Returned system will be normalized to a step of amplitude 1.
 
     Examples:
         ``sys3 = series(sys1, sys2)  # same as sys3 = sys1 * sys2``
@@ -429,25 +520,17 @@ def series(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
         The resulting system.
 
     Raises:
-        TypeError: if input type is not supported.
+        TypeError: if parameter type is not supported
     """
-    try:
-        return sys1 * sys2
-    except NotImplementedError:
-        msg = ("series is only supported for objects of type "
-               "<class 'FsrModel'>, got types %s and %s." % (
-                   str(type(sys1)), str(type(sys2))))
-        raise TypeError(msg)
+    return sys1 * sys2
 
 
-def feedback(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
+def feedback(sys1: FsrModel, sys2: FsrModel, sign: int=-1) -> FsrModel:
     """Returns the feedback connection of sys1 and sys2.
 
     This is a wrapper for FsrModels __truediv__ method. sys1 is in forwards
     direction and sys2 in backwards direction. Both systems timebases 
-    must match. Returned systems max_delta is the smaller of the two connected
-    ones. Returned system will be normalized to a step of height 1. 
-    Warnings for the returned system are turned off.
+    must match. Returned system will be normalized to a step of amplitude 1.
 
     Examples:
         ``sys3 = feedback(sys1, sys2)  # same as sys1 / sys2``
@@ -455,49 +538,44 @@ def feedback(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
     Args:
         sys1: First system.
         sys2: Second system.
+        sign (Optional): Sign of feedback. -1 indicates a negative feedback,
+            1 a positive feedback. Defaults to -1.
 
     Returns:
         The resulting system.
 
     Raises:
-        TypeError: if input type is not supported.
+        TypeError: if parameter type is not supported
     """
-    try:
+    if sign > 0:
+        return sys1 / (-1 * sys2)
+    else:
         return sys1 / sys2
-    except NotImplementedError:
-        msg = ("feedback is only supported for objects of type "
-               "<class 'FsrModel'>, got types %s and %s." % (
-                   str(type(sys1)), str(type(sys2))))
-        raise TypeError(msg)
 
 
-def import_csv(filehandle: IO, max_delta: float=0.01, show_warnings: bool=True, 
-               delimiter: str=',', quotechar: str='"') -> FsrModel:
+def import_csv(filehandle: IO, delimiter: str=',',
+                quotechar: str='"') -> FsrModel:
     """Imports a system from a CSV file.
-    
+
     Expects a file handle in read-mode. CSV dialect can be specified by
-    delimiter and quotechar parameters. Returned model parameters max_delta and
-    show_warnings can also be specified.
-    
+    delimiter and quotechar parameters.
+
     Args:
         filehandle: Handle of the file.
-        max_delta (Optional): Specifies the model parameter max_delta. Defaults
-            to 0.01.
-        show_warnings (Optional): Specifies the model parameter show_warnings.
-            Defaults to True.
         delimiter (Optional): Delimiter string for CSV dialect.
             Defaults to ','.
         quotechar (Optional): Quote character string for CSV dialect.
             Defaults to '"'.
-            
+
     Returns:
         Model found in file.
-        
+
     Raises:
         IOError: if file can not be properly read.
     """
 
-    reader = csv.reader(filehandle, delimiter=delimiter, quotechar=quotechar, lineterminator='\n')
+    reader = csv.reader(filehandle, delimiter=delimiter, quotechar=quotechar,
+			lineterminator='\n')
     t = []
     u = []
     y = []
@@ -507,19 +585,19 @@ def import_csv(filehandle: IO, max_delta: float=0.01, show_warnings: bool=True,
             u.append(float(row[1]))
             y.append(float(row[2]))
     except:
-        msg = "Something went wrong while reading the file."
-        raise IOError(msg)
-    return FsrModel(np.array(y), t=np.array(t), max_delta=max_delta, 
-                              show_warnings=show_warnings)
+        msg = ("Something went wrong while reading the file. The format in the "
+               "file might be unsupported.")
+        raise IOError(msg) from None
+    return FsrModel(np.array(y), t=np.array(t))
 
 
 def export_csv(model: FsrModel, filehandle: IO, delimiter: str=',', 
                quotechar: str='"') -> None:
     """Exports a system to a CSV file.
-    
+
     Expects a file handle of the file in write-mode. CSV dialect can be
     specified with delimiter and quotechar parameters.
-    
+
     Args:
         model: Model to export.
         filehandle: Handle of the file.
@@ -527,22 +605,18 @@ def export_csv(model: FsrModel, filehandle: IO, delimiter: str=',',
             Defaults to ','.
         quotechar (Optional): Quote character string for CSV dialect.
             Defaults to '"'.
-            
+
     Raises:
-        TypeError: model parameter is of wrong type.
+        TypeError: if model parameter is of wrong type.
     """
     if isinstance(model, FsrModel):
         writer = csv.writer(filehandle, delimiter=delimiter,
-                            quotechar=quotechar, lineterminator='\n')
-        info = model.get_model_info()
-        t = info['t']
-        y = info['y']
-        u = info['u']
+                            quotechar=quotechar,
+                            lineterminator="\n")
+        y, u, t = model.get_model_info()
         for i in range(len(t)):
             writer.writerow([t[i], u[i], y[i]])
     else:
         msg = "Expected type <class 'FsrModel'>, got type %s." % (
             str(type(model)))
         raise TypeError(msg)
-
-# TODO: forced_response and step_response as module methods
