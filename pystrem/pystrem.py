@@ -23,6 +23,7 @@ import warnings
 from typing import Iterable, IO, Union, Tuple
 import csv
 
+__version__ = '0.1'
 
 class FsrModel(object):
     """Handles simulation of Finite-Step-Response models.
@@ -31,9 +32,10 @@ class FsrModel(object):
     FSR models. It is intended to be used exactly as a transfer function
     would be. TODO: expand this
     """
+    _unstable_allowed = False
 
     def __init__(self, y: Iterable[float], t: Iterable[float],
-                 u: Iterable[float]=None) -> None:
+                 u: Iterable[float]=None, optimize: bool=True) -> None:
         """Creates FsrModel from given parameters.
 
         u should be a step, otherwise simulation accuracy will be bad. y is
@@ -41,9 +43,11 @@ class FsrModel(object):
         
         Args:
             y: Step response of the system.
-            t: time vector.
+            t: Time vector.
             u (Optional): Input which was given to the system to create y. 
                 Defaults to a step of amplitude one starting at time zero.
+            optimize (Optional): Indicates whether model should be optimized
+                for fast simulation speed. Defaults to True.
 
         Raises:
             TypeError: if argument is of wrong type
@@ -59,7 +63,6 @@ class FsrModel(object):
         except Exception as e:
             msg = "Argument t cannot be converted to numpy array."
             raise type(e)(msg) from None
-
         if u is not None:
             try:
                 self._u = np.array(u, dtype=float)
@@ -69,22 +72,58 @@ class FsrModel(object):
         else:
             # default: step with amplitude 1
             self._u = np.ones(len(self._t))
-        if len(self._u) != len(self._t):
-            msg = "t and u don't have the same dimensions."
-            raise ValueError(msg)
-	# TODO: check for constant dt
         idx = self._find_step_in_u(self._u)
         self._y = self._y[idx:]
         self._u = self._u[idx:]
+        self._t = self._t[idx:]
         self._u_0 = self._u[-1]
         # considered step amplitude for all purposes, important for calculation
         self._dt = self._t[1] - self._t[0]
         # model step size
+        for i in range(1, len(self._t)):
+            dt = self._t[i] - self._t[i-1]
+            if not math.isclose(self._dt, dt, rel_tol=1e-3):
+                msg = "t is not equidistant."
+                raise ValueError(msg)
+        if len(self._u) != len(self._t):
+            msg = "t and u don't have the same dimensions. t: %d, u: %d" % (
+                len(self._t), len(self._u))
+            raise ValueError(msg)
         self._sim_u = []
-        # used in method simulate_step
+        # used in method simulate_step, stores input
         self._sim_du = []
-        # used in method simulate_step
+        # used in method simulate_step, stores input delta
+        # detect if system is unstable
+        if not math.isclose((y[-1]-y[-2]) / self._dt, 0., abs_tol=1e-2):
+            if FsrModel._unstable_allowed:
+                msg = ("Your system appears to be unstable. Simulating with "
+                       "unstable systems is very likely to cause simulation "
+                       "errors.")
+                warnings.warn(UnstableSystemWarning(msg))
+            else: 
+                msg = ("Your system appears to be unstable. If you still want "
+                       "to simulate you can call FsrModel.allow_unstable(True)"
+                       " to simulate anyways.")
+                raise UnstableSystemException(msg)
+        self._is_optimized = False
+        if optimize:
+            self.optimize()
 
+    @staticmethod
+    def allow_unstable(allow: bool) -> None:
+        """Allow or disallow unstable systems.
+        
+        Unstable systems are currently not supported and will in most cases 
+        cause errors in simulation. Normally an exception is raised whenever 
+        an unstable system is created, by allowing them this is changed to a 
+        warning.
+        
+        Args:
+            allow: Setting this to True will warn you when an unstable system 
+                is created, setting this to False will raise an exception.
+        """
+        FsrModel._unstable_allowed = allow
+    
     def _find_step_in_u(self, u: Iterable[float]) -> int:
         """ Looks for the index where the jump in _u occurs."""
         u_max = abs(max(u))
@@ -93,11 +132,12 @@ class FsrModel(object):
                 return i
         return 0
 
-    def crop_to_dynamic_range(self, delta: float=0.01):
+    def optimize(self, delta: float=0.01) -> None:
         """Crops the underlying response according to delta.
         
         This method crops y, t and u to show only the dynamics of the system.
         Should speed up simulation, at the cost of a slight accuracy loss.
+        Will do nothing if model has already been optimized.
         
         Args:
             delta: Used to determine at what point model step response is to 
@@ -105,30 +145,28 @@ class FsrModel(object):
                 more than delta in % relative to static value, it is
                 considered static. Defaults to 0.01.
         """
-        static_val = self._y[-1]
-        if math.isclose(static_val, 0):
-            static_val = max(self._y)
-        for i in range(1, len(self._t)):
-            if i == (len(self._t) - 1):
-                msg = ("Could not detect any dynamic in step response. "
-                       "This might mean your system is static or delta "
-                       "is set too high.")
-                warnings.warn(msg, RuntimeWarning)
-
-            val = self._y[-i]
-            current_delta = (abs((val - static_val) / static_val)) * 100.
-            if (current_delta > delta):
-                if ((i <= 1) or (i < (0.01 * len(self._t)))):
-                    msg = ("End of dynamic is very close to end of "
-                           "step response.\nYour system might be unstable or "
-                           "your step response does not show the full "
-                           "dynamics of your system.")
-                    warnings.warn(msg, RuntimeWarning)
-                crop_idx = len(self._y) - i + 1
-                self._y = self._y[:crop_idx]
-                self._u = self._u[:crop_idx]
-                self._t = self._t[:crop_idx]
-                return
+        if not self._is_optimized:
+            self._is_optimized = True
+            static_val = self._y[-1]
+            if math.isclose(static_val, 0):
+                static_val = max(self._y)
+            for i in range(1, len(self._t)):
+                if i == (len(self._t) - 1):
+                    # No dynamic detected, leave it be
+                    return
+                val = self._y[-i]
+                current_delta = (abs((val - static_val) / static_val)) * 100.
+                if (current_delta > delta):
+                    if ((i <= 1) or (i < (0.01 * len(self._t)))):
+                        # only a small amount would be cut, better not cut it
+                        return
+                    crop_idx = len(self._y) - i + 1
+                    self._y = self._y[:crop_idx]
+                    self._u = self._u[:crop_idx]
+                    self._t = self._t[:crop_idx]
+                    return
+        else:
+            return
 
     def _validate_input(
             self, t: Iterable[float], u: Iterable[float]) -> (bool, str):
@@ -203,12 +241,13 @@ class FsrModel(object):
                     y[i] = y1[i] + y2[i]
                 for i in range(len(y1), len(y2)):
                     y[i] = y1_static + y2[i]
-                return FsrModel(y, t=other_t)
+                return FsrModel(y, t=other_t, optimize=False)
         elif isinstance(other, int) or isinstance(other, float):
             new_y = np.zeros(len(self._y))
             for i in range(len(new_y)):
                 new_y[i] = self._y[i] + other
-            return FsrModel(new_y, t=self._t, u=self._u)
+            return FsrModel(new_y, t=self._t, u=self._u, 
+                            optimize=False)
         else:
             msg = ("Unsupported type %s." % (
                 str(type(other))))
@@ -243,12 +282,13 @@ class FsrModel(object):
                     y[i] = y1[i] - y2[i]
                 for i in range(len(y1), len(y2)):
                     y[i] = y1_static - y2[i]
-                return FsrModel(y, t=other_t)
+                return FsrModel(y, t=other_t, optimize=False)
         elif isinstance(other, int) or isinstance(other, float):
             new_y = np.zeros(len(self._y))
             for i in range(len(new_y)):
                 new_y[i] = self._y[i] - other
-            return FsrModel(new_y, t=self._t, u=self._u)
+            return FsrModel(new_y, t=self._t, u=self._u, 
+                            optimize=False)
         else:
             msg = ("Unsupported type %s." % (
                 str(type(other))))
@@ -279,7 +319,8 @@ class FsrModel(object):
             new_y = np.zeros(len(self._y))
             for i in range(len(new_y)):
                 new_y[i] = self._y[i] * other
-            return FsrModel(new_y, t=self._t, u=self._u)
+            return FsrModel(new_y, t=self._t, u=self._u,
+                            optimize=False)
         else:
             msg = ("Unsupported type %s." % (
                 str(type(other))))
@@ -321,10 +362,15 @@ class FsrModel(object):
                             (y[i - j] - y[i - j - 1])
                 y[i] += right_side
             time = self._dt * np.arange(length)
+            # if system has differentiating properties, this fixes the value @t=0
+            if not math.isclose(0., (self._y[0] / self._u_0) / 
+                                (1 + other._y[0] / other._u_0)):
+                y = y[1:]
+                time = time[:-1]
+            # TODO: this is a hack, find mathematical solution or explanation
             return FsrModel(y=y, t=time)
         elif isinstance(other, int) or isinstance(other, float):
-            sys2 = FsrModel(np.array([0, other]),
-                            t=np.array([0, self._dt]))
+            sys2 = FsrModel([other, other], t=[0, self._dt])
             return self / sys2
         else:
             msg = ("Unsupported type %s." % (
@@ -333,7 +379,8 @@ class FsrModel(object):
 
     def __rtruediv__(self, other) -> 'FsrModel':
         
-        sys2 = FsrModel(np.array([0, other]), t=np.array([0, self._dt]))
+        sys2 = FsrModel(np.array([other, other]), t=np.array([0, self._dt]), 
+                        optimize=False)
         return sys2 / self
 
     def simulate_step(self, u: float) -> float:
@@ -341,15 +388,15 @@ class FsrModel(object):
         
         This method is intended to be used for integration in simulation
         algorithms. Make sure simulation time step is equal to model
-        time step. Internally a memory of last inputs is created, you can clear
-        it by calling the clear_sim_mem method of this instance if you want to 
-        use a single model instance for multiple simulations.
+        time step. Internally a memory of last inputs is created, it can be
+        cleared by calling clear_sim_mem. Do that if you want to use a single 
+        model instance for multiple simulations.
         
         Args:
             u: Input signal value.
             
         Raises:
-            TypeError: if input argument is of wrong type
+            TypeError: if input argument is of wrong type.
         """
         if len(self._sim_u) == 0:
             self._sim_du.append(u)
@@ -384,9 +431,9 @@ class FsrModel(object):
         Returns:
             A tuple with following entries
 
-            * y (Iterable): Step response of system.
-            * u (Iterable): Input to create y.
-            * t (Iterable): Model timebase.
+            * y : Step response of system.
+            * u : Input to create y.
+            * t : Model timebase.
         """
         # array[:] creates a copy of that array. We don't want to return
         # references here.
@@ -494,7 +541,7 @@ def parallel(sys1: FsrModel, sys2: FsrModel, sign: int=1) -> FsrModel:
         The resulting system.
 
     Raises:
-        TypeError: if parameter type is not supported
+        TypeError: if parameter type is not supported.
     """
 
     if sign < 0:
@@ -520,7 +567,7 @@ def series(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
         The resulting system.
 
     Raises:
-        TypeError: if parameter type is not supported
+        TypeError: if parameter type is not supported.
     """
     return sys1 * sys2
 
@@ -545,7 +592,7 @@ def feedback(sys1: FsrModel, sys2: FsrModel, sign: int=-1) -> FsrModel:
         The resulting system.
 
     Raises:
-        TypeError: if parameter type is not supported
+        TypeError: if parameter type is not supported.
     """
     if sign > 0:
         return sys1 / (-1 * sys2)
@@ -558,7 +605,7 @@ def import_csv(filehandle: IO, delimiter: str=',',
     """Imports a system from a CSV file.
 
     Expects a file handle in read-mode. CSV dialect can be specified by
-    delimiter and quotechar parameters.
+    delimiter and quotechar parameters. Imported models will not be optimized.
 
     Args:
         filehandle: Handle of the file.
@@ -588,7 +635,7 @@ def import_csv(filehandle: IO, delimiter: str=',',
         msg = ("Something went wrong while reading the file. The format in the "
                "file might be unsupported.")
         raise IOError(msg) from None
-    return FsrModel(np.array(y), t=np.array(t))
+    return FsrModel(y, t=t, optimize=False)
 
 
 def export_csv(model: FsrModel, filehandle: IO, delimiter: str=',', 
@@ -620,3 +667,11 @@ def export_csv(model: FsrModel, filehandle: IO, delimiter: str=',',
         msg = "Expected type <class 'FsrModel'>, got type %s." % (
             str(type(model)))
         raise TypeError(msg)
+
+
+class UnstableSystemException(Exception):
+    pass
+
+
+class UnstableSystemWarning(Warning):
+    pass

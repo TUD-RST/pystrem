@@ -35,7 +35,6 @@ class CoreTest(unittest.TestCase):
         sys = ctrl.tf([1], [100, 1])  # PT1
         _, o = ctrl.step_response(sys, self.time)
         m = ps.FsrModel(o, t=self.time)
-        m.crop_to_dynamic_range()
         _, y = ps.forced_response(m, self.t, self.u)
         _, o, _ = ctrl.forced_response(sys, self.t, self.u)
         self.assertTrue(np.allclose(y, o, rtol=1e-2), "forced response broke")
@@ -45,7 +44,6 @@ class CoreTest(unittest.TestCase):
         sys = ctrl.tf([1], [1000, 10, 1])  # PT2 with overshooting
         _, o = ctrl.step_response(sys, self.time)
         m = ps.FsrModel(o, t=self.time)
-        m.crop_to_dynamic_range()
         _, y = ps.forced_response(m, self.t, self.u)
         _, o, _ = ctrl.forced_response(sys, self.t, self.u)
         self.assertTrue(np.allclose(y, o, rtol=1e-2), "pt2 response broke")
@@ -55,7 +53,6 @@ class CoreTest(unittest.TestCase):
         sys = ctrl.tf([-50, 1], [1000, 10, 1])  # all-pass
         _, o = ctrl.step_response(sys, self.time)
         m = ps.FsrModel(o, t=self.time)
-        m.crop_to_dynamic_range()
         _, y = ps.forced_response(m, self.t, self.u)
         _, o, _ = ctrl.forced_response(sys, self.t, self.u)
         self.assertTrue(np.allclose(y, o, rtol=1e-1),
@@ -65,8 +62,7 @@ class CoreTest(unittest.TestCase):
         
         sys = ctrl.tf([100], [50, 1000, 150, 0])  # IT2
         _, o = ctrl.step_response(sys, self.time)
-        m = ps.FsrModel(o, t=self.time)
-        #m.crop_to_dynamic_range()
+        m = ps.FsrModel(o, t=self.time, optimize=False)
         _, y = ps.forced_response(m, self.t, self.u)
         _, o, _ = ctrl.forced_response(sys, self.t, self.u)
         self.assertTrue(np.allclose(y, o, rtol=1e-2), "it2 response broke")
@@ -86,7 +82,6 @@ class CoreTest(unittest.TestCase):
                 u[i] = 0.5
         _, o = ctrl.step_response(sys, time)
         m = ps.FsrModel(o, time)
-        m.crop_to_dynamic_range()
         _, y = ps.forced_response(m, time, u)
         _, o, _ = ctrl.forced_response(sys, time, u)
         self.assertTrue(np.allclose(y, o, rtol=1e-2), "crazy response broke")
@@ -107,7 +102,6 @@ class CoreTest(unittest.TestCase):
         time = np.arange(0, 10, 0.1)
         _, o = ctrl.step_response(sys)
         m = ps.FsrModel(o, time)
-        m.crop_to_dynamic_range()
         time = np.arange(0, 10, 0.1)
         u = np.ones(len(time))
         y1 = []
