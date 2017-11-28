@@ -99,3 +99,7 @@ ENV/
 
 # mypy
 .mypy_cache/
+/pystrem/.idea/misc.xml
+/pystrem/.idea/modules.xml
+/pystrem/.idea/pystrem.iml
+/pystrem/.idea/workspace.xml
