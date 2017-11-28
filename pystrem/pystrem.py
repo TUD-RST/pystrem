@@ -59,7 +59,6 @@ class FsrModel(object):
         except Exception as e:
             msg = "Argument t cannot be converted to numpy array."
             raise type(e)(msg) from None
-
         if u is not None:
             try:
                 self._u = np.array(u, dtype=float)
@@ -69,21 +68,27 @@ class FsrModel(object):
         else:
             # default: step with amplitude 1
             self._u = np.ones(len(self._t))
-        if len(self._u) != len(self._t):
-            msg = "t and u don't have the same dimensions."
-            raise ValueError(msg)
-	# TODO: check for constant dt
         idx = self._find_step_in_u(self._u)
         self._y = self._y[idx:]
         self._u = self._u[idx:]
+        self._t = self._t[idx:]
         self._u_0 = self._u[-1]
         # considered step amplitude for all purposes, important for calculation
         self._dt = self._t[1] - self._t[0]
+        for i in range(1, len(self._t)):
+            dt = self._t[i] - self._t[i-1]
+            if not math.isclose(self._dt, dt, rel_tol=1e-3):
+                msg = "t is not equidistant."
+                raise ValueError(msg)
+        if len(self._u) != len(self._t):
+            msg = "t and u don't have the same dimensions. t: %d, u: %d" % (
+                len(self._t), len(self._u))
+            raise ValueError(msg)
         # model step size
         self._sim_u = []
-        # used in method simulate_step
+        # used in method simulate_step, stores input
         self._sim_du = []
-        # used in method simulate_step
+        # used in method simulate_step, stores input delta
 
     def _find_step_in_u(self, u: Iterable[float]) -> int:
         """ Looks for the index where the jump in _u occurs."""
@@ -126,6 +131,7 @@ class FsrModel(object):
                     warnings.warn(msg, RuntimeWarning)
                 crop_idx = len(self._y) - i + 1
                 self._y = self._y[:crop_idx]
+                self._y[-1] = static_val  # this keeps static value the same
                 self._u = self._u[:crop_idx]
                 self._t = self._t[:crop_idx]
                 return
