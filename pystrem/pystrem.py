@@ -347,15 +347,15 @@ class FsrModel(object):
         
         This method is intended to be used for integration in simulation
         algorithms. Make sure simulation time step is equal to model
-        time step. Internally a memory of last inputs is created, you can clear
-        it by calling the clear_sim_mem method of this instance if you want to 
-        use a single model instance for multiple simulations.
+        time step. Internally a memory of last inputs is created, it can be
+        cleared by calling clear_sim_mem. Do that if you want to use a single 
+        model instance for multiple simulations.
         
         Args:
             u: Input signal value.
             
         Raises:
-            TypeError: if input argument is of wrong type
+            TypeError: if input argument is of wrong type.
         """
         if len(self._sim_u) == 0:
             self._sim_du.append(u)
@@ -390,9 +390,9 @@ class FsrModel(object):
         Returns:
             A tuple with following entries
 
-            * y (Iterable): Step response of system.
-            * u (Iterable): Input to create y.
-            * t (Iterable): Model timebase.
+            * y : Step response of system.
+            * u : Input to create y.
+            * t : Model timebase.
         """
         # array[:] creates a copy of that array. We don't want to return
         # references here.
@@ -500,7 +500,7 @@ def parallel(sys1: FsrModel, sys2: FsrModel, sign: int=1) -> FsrModel:
         The resulting system.
 
     Raises:
-        TypeError: if parameter type is not supported
+        TypeError: if parameter type is not supported.
     """
 
     if sign < 0:
@@ -526,7 +526,7 @@ def series(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
         The resulting system.
 
     Raises:
-        TypeError: if parameter type is not supported
+        TypeError: if parameter type is not supported.
     """
     return sys1 * sys2
 
@@ -551,7 +551,7 @@ def feedback(sys1: FsrModel, sys2: FsrModel, sign: int=-1) -> FsrModel:
         The resulting system.
 
     Raises:
-        TypeError: if parameter type is not supported
+        TypeError: if parameter type is not supported.
     """
     if sign > 0:
         return sys1 / (-1 * sys2)
