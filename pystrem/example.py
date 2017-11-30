@@ -27,7 +27,12 @@ def creation_example():
     # simulating a reference with control
     t2, y2, _ = ctrl.forced_response(sys, time, u)
     # show everything
-    plt.plot(t1, y1, t2, y2, t1, u)
+    ax = plt.subplot(111)
+    plt.plot(t1, y1, label="Model response")
+    plt.plot(t2, y2, label="Reference response")
+    plt.plot(t1, u, label="Input signal")
+    ax.legend()
+    plt.title("pystrem example")
     plt.show()
     
 def external_sim_example():
@@ -68,7 +73,10 @@ def external_sim_example():
         u = 2 * e  # here we would normally call a function which calculates
         # the output of our discrete system, here it is simply 2 * e
         y[i] = model.simulate_step(u)
-    plt.plot(time, y)
+    plt.plot(time, y, label="Simulation output")
+    plt.plot(time, w, label="Input signal")
+    plt.legend()
+    plt.title("External simulation example")
     plt.show()
         
     
