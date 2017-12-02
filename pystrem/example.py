@@ -34,56 +34,9 @@ def creation_example():
     ax.legend()
     plt.title("pystrem example")
     plt.show()
-    
-def external_sim_example():
-    """Example for use in a simulation:
-    This creates a system with a discrete controller and a FSR model in a
-    feedback loop. Looks like this:
-                           
-        w--*-e->|R|--u->|P|----> y
-           ^-               |
-           |                |
-           ------------------
-    
-    To keep it simple R = 2 and P is an unstable PT1 system with
-        
-               1
-       P =  -------
-             s - 1
-             
-    """
-    # as in above example, create our model from python-control step response
-    sys = ctrl.tf([1], [1, -1])
-    # create simulation time array
-    time = np.arange(0, 5., 0.01)
-    _, output = ctrl.step_response(sys, time)   
-    # When creating models from unstable systems it is important to create the 
-    # model with a step response which is as long as the simulation time. 
-    # Otherwise we will very likely make mistakes in simulation. 
-    model = ps.FsrModel(output, t=time)
-
-    # create input signal, a step here
-    w = np.ones(len(time))
-    y = np.zeros(len(time))
-    for i in range(len(time)):
-        if i != 0:
-            e = w[i] - y[i-1]
-        else:
-            e = w[i]
-        u = 2 * e  # here we would normally call a function which calculates
-        # the output of our discrete system, here it is simply 2 * e
-        y[i] = model.simulate_step(u)
-    plt.plot(time, y, label="Simulation output")
-    plt.plot(time, w, label="Input signal")
-    plt.legend()
-    plt.title("External simulation example")
-    plt.show()
-        
-    
 
 if __name__ == '__main__':
    
     creation_example()
-    external_sim_example()
     
     
