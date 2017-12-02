@@ -19,7 +19,6 @@ class IOTest(unittest.TestCase):
             i += 1
         _, output = ctrl.step_response(sys, time)   
         m = ps.FsrModel(output, t=time)
-        m.crop_to_dynamic_range()
         # testing our model with a test signal
         test_sgnl_len = int(2500)
         u = np.zeros(test_sgnl_len)

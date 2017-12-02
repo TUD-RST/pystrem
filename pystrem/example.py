@@ -15,8 +15,6 @@ def creation_example():
     _, output = ctrl.step_response(sys, time)   
     # creating the model
     model = ps.FsrModel(output, t=time)
-    # make it faster
-    model.crop_to_dynamic_range(0.01)
     # creating a test input signal
     u = np.ones(sim_duration)
     for i in range(len(u)):

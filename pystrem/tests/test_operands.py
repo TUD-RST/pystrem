@@ -30,9 +30,7 @@ class OperandTest(unittest.TestCase):
         _, o1 = ctrl.step_response(cls.sys1, cls.time)
         _, o2 = ctrl.step_response(cls.sys2, cls.time)
         cls.m1 = ps.FsrModel(o1, t=cls.time)
-        cls.m1.crop_to_dynamic_range()
         cls.m2 = ps.FsrModel(o2, t=cls.time)
-        cls.m2.crop_to_dynamic_range()
 
     def test_add(self):
 
