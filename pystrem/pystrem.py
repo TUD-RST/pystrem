@@ -130,7 +130,7 @@ class FsrModel(object):
                 if (current_delta > delta):
                     if ((i <= 1) or (i < (0.01 * len(self._t)))):
                         msg="Detected an end of dynamic which is very close" \
-                            " to end of response. This might mean your " \
+                            " to end of responsef. This might mean your " \
                             "system is unstable. If this is not the case, " \
                             "you can turn off this warning by setting the " \
                             "optimize argument to False on model init."
@@ -339,9 +339,15 @@ class FsrModel(object):
                             (y[i - j] - y[i - j - 1])
                 y[i] += right_side
             time = self._dt * np.arange(length)
+            # if system has differentiating properties, this fixes the value @t=0
+            if not math.isclose(0., (self._y[0] / self._u_0) / 
+                                (1 + other._y[0] / other._u_0)):
+                y = y[1:]
+                time = time[:-1]
+            # TODO: this is a hack, find mathematical solution or explanation
             return FsrModel(y=y, t=time)
         elif isinstance(other, int) or isinstance(other, float):
-            sys2 = FsrModel([0, other], t=[0, self._dt])
+            sys2 = FsrModel([other, other], t=[0, self._dt])
             return self / sys2
         else:
             msg = ("Unsupported type %s." % (
@@ -350,7 +356,7 @@ class FsrModel(object):
 
     def __rtruediv__(self, other) -> 'FsrModel':
         
-        sys2 = FsrModel(np.array([0, other]), t=np.array([0, self._dt]), 
+        sys2 = FsrModel(np.array([other, other]), t=np.array([0, self._dt]), 
                         optimize=False)
         return sys2 / self
 
