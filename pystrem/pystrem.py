@@ -131,7 +131,7 @@ class FsrModel(object):
                     if ((i <= 1) or (i < (0.01 * len(self._t)))):
                         msg=("Detected end of dynamic which is very close" 
                             " to end of response while optimizing. This might"
-                            "mean your system is unstable. Unstable systems"
+                            " mean your system is unstable. Unstable systems"
                             " will very likely lead to simulation errors.")
                         warnings.warn(RuntimeWarning(msg))
                         return
