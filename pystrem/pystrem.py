@@ -129,11 +129,10 @@ class FsrModel(object):
                 current_delta = (abs((val - static_val) / static_val)) * 100.
                 if (current_delta > delta):
                     if ((i <= 1) or (i < (0.01 * len(self._t)))):
-                        msg="Detected an end of dynamic which is very close" \
-                            " to end of responsef. This might mean your " \
-                            "system is unstable. If this is not the case, " \
-                            "you can turn off this warning by setting the " \
-                            "optimize argument to False on model init."
+                        msg=("Detected end of dynamic which is very close" 
+                            " to end of response while optimizing. This might"
+                            "mean your system is unstable. Unstable systems"
+                            " will very likely lead to simulation errors.")
                         warnings.warn(RuntimeWarning(msg))
                         return
                     crop_idx = len(self._y) - i + 1
