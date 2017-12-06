@@ -1,12 +1,7 @@
-'''
-Created on Nov 1, 2017
-
-@author: christoph
-'''
 import unittest
 import numpy as np
 import control as ctrl
-import pystrem
+import pystrem as ps
 
 
 class CoreTest(unittest.TestCase):
@@ -39,8 +34,8 @@ class CoreTest(unittest.TestCase):
         
         sys = ctrl.tf([1], [100, 1])  # PT1
         _, o = ctrl.step_response(sys, self.time)
-        m = pystrem.FsrModel(o, t=self.time, max_delta=0.01)
-        _, y = m.forced_response(self.t, self.u)
+        m = ps.FsrModel(o, t=self.time)
+        _, y = ps.forced_response(m, self.t, self.u)
         _, o, _ = ctrl.forced_response(sys, self.t, self.u)
         self.assertTrue(np.allclose(y, o, rtol=1e-2), "forced response broke")
 
@@ -48,8 +43,8 @@ class CoreTest(unittest.TestCase):
         
         sys = ctrl.tf([1], [1000, 10, 1])  # PT2 with overshooting
         _, o = ctrl.step_response(sys, self.time)
-        m = pystrem.FsrModel(o, t=self.time, max_delta=0.01)
-        _, y = m.forced_response(self.t, self.u)
+        m = ps.FsrModel(o, t=self.time)
+        _, y = ps.forced_response(m, self.t, self.u)
         _, o, _ = ctrl.forced_response(sys, self.t, self.u)
         self.assertTrue(np.allclose(y, o, rtol=1e-2), "pt2 response broke")
 
@@ -57,8 +52,8 @@ class CoreTest(unittest.TestCase):
         
         sys = ctrl.tf([-50, 1], [1000, 10, 1])  # all-pass
         _, o = ctrl.step_response(sys, self.time)
-        m = pystrem.FsrModel(o, t=self.time, max_delta=0.01)
-        _, y = m.forced_response(self.t, self.u)
+        m = ps.FsrModel(o, t=self.time)
+        _, y = ps.forced_response(m, self.t, self.u)
         _, o, _ = ctrl.forced_response(sys, self.t, self.u)
         self.assertTrue(np.allclose(y, o, rtol=1e-1),
                         "all-pass response broke")
@@ -67,9 +62,8 @@ class CoreTest(unittest.TestCase):
         
         sys = ctrl.tf([100], [50, 1000, 150, 0])  # IT2
         _, o = ctrl.step_response(sys, self.time)
-        m = pystrem.FsrModel(o, t=self.time, max_delta=0.01,
-                                show_warnings=False)
-        _, y = m.forced_response(self.t, self.u)
+        m = ps.FsrModel(o, t=self.time, optimize=False)
+        _, y = ps.forced_response(m, self.t, self.u)
         _, o, _ = ctrl.forced_response(sys, self.t, self.u)
         self.assertTrue(np.allclose(y, o, rtol=1e-2), "it2 response broke")
    
@@ -87,22 +81,34 @@ class CoreTest(unittest.TestCase):
             if i < 25/0.01:
                 u[i] = 0.5
         _, o = ctrl.step_response(sys, time)
-        m = pystrem.FsrModel(o, time, max_delta=0.01,
-                                show_warnings=False)
-        _, y = m.forced_response(time, u)
+        m = ps.FsrModel(o, time)
+        _, y = ps.forced_response(m, time, u)
         _, o, _ = ctrl.forced_response(sys, time, u)
         self.assertTrue(np.allclose(y, o, rtol=1e-2), "crazy response broke")
 
-    def test_u_crop(self):
+    def test_u_step_find(self):
         
         sys = ctrl.tf([1], [100, 1])  # PT1
         _, o = ctrl.step_response(sys, self.time)
         u = np.zeros(self.sim_duration)
         for i in range(60, len(u)):
             u[i] = 1
-        m = pystrem.FsrModel(o, t=self.time, u=u, max_delta=0.01)
+        m = ps.FsrModel(o, t=self.time, u=u)
         u = np.ones(len(m._u))
-        self.assertTrue(np.array_equal(u, m._u), "u cropping broke")
+        self.assertTrue(np.array_equal(u, m._u), "u step finding broke")
+        
+    def test_simulate_step(self):
+        sys = ctrl.tf([1], [10, 1])
+        time = np.arange(0, 10, 0.1)
+        _, o = ctrl.step_response(sys)
+        m = ps.FsrModel(o, time)
+        time = np.arange(0, 10, 0.1)
+        u = np.ones(len(time))
+        y1 = []
+        for i in range(len(time)):
+            y1.append(m.simulate_step(u[i]))
+        _, y2 = ps.step_response(m, time)
+        self.assertTrue(np.array_equal(y1, y2), "simulate step broke")
 
 
 if __name__ == "__main__":

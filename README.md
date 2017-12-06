@@ -1,5 +1,5 @@
 # PyStrem
-A Python library for feedback control using finite step response models.
+A Python library for feedback control using finite step response models (PYthon STep REsponse Models). 
 
 PyStrem is a library providing a framework for the handling of finite step response models used for systems analysis, and feedforward as well as feedback control. The main characteristics of finite step response models is the fact that the system dynamics is not represented by an ordinary differential equation but by the step response data itself. They are especially used for linear systems the dynamics of which can only be described by high order transfer functions.
 
