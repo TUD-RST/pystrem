@@ -31,6 +31,7 @@ class FsrModel(object):
     FSR models. It is intended to be used exactly as a transfer function
     would be. TODO: expand this
     """
+    _unstable_allowed = False
 
     def __init__(self, y: Iterable[float], t: Iterable[float],
                  u: Iterable[float]=None, optimize: bool=True) -> None:
@@ -91,10 +92,37 @@ class FsrModel(object):
         # used in method simulate_step, stores input
         self._sim_du = []
         # used in method simulate_step, stores input delta
+        # detect if system is unstable
+        if not math.isclose((y[-1]-y[-2]) / self._dt, 0., abs_tol=1e-2):
+            if FsrModel._unstable_allowed:
+                msg = ("Your system appears to be unstable. Simulating with "
+                       "unstable systems is very likely to cause simulation "
+                       "errors.")
+                warnings.warn(UnstableSystemWarning(msg))
+            else: 
+                msg = ("Your system appears to be unstable. If you still want "
+                       "to simulate you can call FsrModel.allow_unstable(True)"
+                       " to simulate anyways.")
+                raise UnstableSystemException(msg)
         self._is_optimized = False
         if optimize:
             self.optimize()
 
+    @staticmethod
+    def allow_unstable(allow: bool) -> None:
+        """Allow or disallow unstable systems.
+        
+        Unstable systems are currently not supported and will in most cases 
+        cause errors in simulation. Normally an exception is raised whenever 
+        an unstable system is created, by allowing them this is changed to a 
+        warning.
+        
+        Args:
+            allow: Setting this to True will warn you when an unstable system 
+                is created, setting this to False will raise an exception.
+        """
+        FsrModel._unstable_allowed = allow
+    
     def _find_step_in_u(self, u: Iterable[float]) -> int:
         """ Looks for the index where the jump in _u occurs."""
         u_max = abs(max(u))
@@ -103,7 +131,7 @@ class FsrModel(object):
                 return i
         return 0
 
-    def optimize(self, delta: float=0.01):
+    def optimize(self, delta: float=0.01) -> None:
         """Crops the underlying response according to delta.
         
         This method crops y, t and u to show only the dynamics of the system.
@@ -129,11 +157,7 @@ class FsrModel(object):
                 current_delta = (abs((val - static_val) / static_val)) * 100.
                 if (current_delta > delta):
                     if ((i <= 1) or (i < (0.01 * len(self._t)))):
-                        msg=("Detected end of dynamic which is very close" 
-                            " to end of response while optimizing. This might"
-                            " mean your system is unstable. Unstable systems"
-                            " will very likely lead to simulation errors.")
-                        warnings.warn(RuntimeWarning(msg))
+                        # only a small amount would be cut, better not cut it
                         return
                     crop_idx = len(self._y) - i + 1
                     self._y = self._y[:crop_idx]
@@ -642,3 +666,11 @@ def export_csv(model: FsrModel, filehandle: IO, delimiter: str=',',
         msg = "Expected type <class 'FsrModel'>, got type %s." % (
             str(type(model)))
         raise TypeError(msg)
+
+
+class UnstableSystemException(Exception):
+    pass
+
+
+class UnstableSystemWarning(Warning):
+    pass
