@@ -137,7 +137,6 @@ class FsrModel(object):
                         return
                     crop_idx = len(self._y) - i + 1
                     self._y = self._y[:crop_idx]
-                    self._y[-1] = static_val  # this keeps static value the same
                     self._u = self._u[:crop_idx]
                     self._t = self._t[:crop_idx]
                     return
