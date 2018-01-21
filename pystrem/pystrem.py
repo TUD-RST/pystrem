@@ -570,12 +570,11 @@ class Mpc(object):
         for i in range(len(y_d)):
             y_d_ext[i] = np.r_[y_d[i], np.ones(len(time_horizon))*y_d[i][-1]]
         dt = time[1] - time[0]
-        ext_time = np.arange(0, len(time)+len(time_horizon), dt)  # see above
+        ext_time = np.arange(0, time[-1]+time_horizon[-1], dt)  # see above
         y = np.zeros((len(sys), len(ext_time)))
         u = np.zeros((len(sys[0]), len(time)))
         u_0 = np.zeros(len(sys[0]))  # Initial guesses for minimized parameters
         # Is 0 because we describe it as the differences from last value.
-        msg = ""  # Currently unused, might be useful for debugging
         for i in range(len(time)):
             # Creating frames of all relevant data for the cost functional
             time_frame = ext_time[i:i+len(time_horizon)]
@@ -592,9 +591,13 @@ class Mpc(object):
                                *self._minimizer_args, **self._minimizer_kwargs)
             if not res.success:
                 # This sometimes happens when response is static or getting 
-                # unstable, continue anyways.
-                msg = "Minimizing failed with following message:\n%s" % (
+                # unstable, continue anyways, but warn user.
+                msg = ("Minimizing failed with following message:\n%s\n"
+                       "You might want to try a different minimizing method"
+                       "e.g. Nelder-Mead. If this persists, but simulation"
+                       "results are ok, feel free to ignore this warning.") % (
                     res.message)
+                warnings.warn(RuntimeWarning(msg))
                 u[j][i] = u[j][i-1]
             for j in range(len(res.x)):
                 u[j][i] = u[j][i-1] + res.x[j]
