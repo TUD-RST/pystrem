@@ -593,9 +593,9 @@ class Mpc(object):
                 # This sometimes happens when response is static or getting 
                 # unstable, continue anyways, but warn user.
                 msg = ("Minimizing failed with following message:\n%s\n"
-                       "You might want to try a different minimizing method"
-                       "e.g. Nelder-Mead. If this persists, but simulation"
-                       "results are ok, feel free to ignore this warning.") % (
+                       "You might want to try a different minimizing method,"
+                       " e.g. Nelder-Mead. If this persists, but simulation"
+                       " results are ok, feel free to ignore this warning.") % (
                     res.message)
                 warnings.warn(RuntimeWarning(msg))
                 u[j][i] = u[j][i-1]
