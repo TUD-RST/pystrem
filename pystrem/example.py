@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pystrem as ps
 
-# TODO: move this to doc as maybe a quickstart guide or simply as examples
 
 def creation_example():
     """Example for creation of a FSR model with python-control."""
@@ -35,12 +34,12 @@ def creation_example():
 
 def mpc_example():
     """Example of using a model-predictive-controller with pystrem."""
-    
+  
     # Simulation times
     t = np.arange(0, 15, 0.1)
     t_horizon = np.arange(0, 3, 0.1)
     
-     # Creating our plants   
+    # Creating our plants   
     sys_11 = ctrl.tf([1], [1, 1, 1])
     _, y = ctrl.step_response(sys_11, t)
     model_11 = ps.FsrModel(y, t)
@@ -64,7 +63,6 @@ def mpc_example():
     sys[1][1] = model_22  # output 2 from input 2
     sys[1][0] = model_21  # output 2 from input 1
     mpc = ps.Mpc()
-    mpc.set_minimizer_args(method='Nelder-Mead')
     
     # creating our desired outputs
     y_d = np.ndarray((2, len(t)), float)
@@ -98,7 +96,7 @@ def mpc_example():
     ax3.plot(t, y1, label="plant output 1")
     ax3.plot(t, y2, label="plant output 2")
     ax3.legend()
-    
+
     plt.show()
 
 if __name__ == '__main__':

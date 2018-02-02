@@ -21,7 +21,7 @@ import scipy.optimize as spop
 import collections
 import math
 import warnings
-from typing import Iterable, IO, Union, Tuple, Callable
+from typing import Iterable, IO, Union, Tuple, Callable, Dict
 import csv
 
 
@@ -483,7 +483,7 @@ class Mpc(object):
     
     The minimizing routine used is ``scipy.optimize.minimize``. You can affect
     its behavior by setting additional parameters with 
-    :func:`set_minimizer_args`. For further details see its documentation.
+    :func:`set_minimizer_kwargs`. For further details see its documentation.
     """
     
     
@@ -499,18 +499,67 @@ class Mpc(object):
         
         self._cost_func = cost_func if cost_func else self._default_cost_func
         self._input_func = None
-        self._minimizer_args = []
         self._minimizer_kwargs = {}
+        self._constraints = []
         
-    def set_minimizer_args(self, *args, **kwargs) -> None:
+    def set_minimizer_kwargs(self, **kwargs) -> None:
         """Sets additional parameters of the underlying minimize routine.
         
-        The used routine is ``scipy.optimize.minimize``. For further details see
-        its documentation.
+        The used routine is ``scipy.optimize.minimize``. For further details 
+        see its documentation. The ``args``, ``bounds`` and ``constraints`` 
+        parameters can not be set. For ``constraints`` use 
+        :func:`set_constraints`.
         """
-        self._minimizer_args = args
+        if "args" in kwargs:
+            msg = ("'args' parameter can not be set. This certainly won't do "
+                   "what you wanted it to do.")
+            raise ValueError(msg)
+        if "constraints" in kwargs:
+            msg = ("'constraints' parameter can not be set with this function."
+             " Use set_constraints instead.")
+            raise ValueError(msg)
+        if "bounds" in kwargs:
+            msg = ("'bounds' parameter can not be set. You should instead "
+                   "use constraints.")
+            raise ValueError(msg)
         self._minimizer_kwargs = kwargs
         
+    def set_constraints(self, constraints: Iterable[Dict]) -> None:
+        """Sets equality and inequality constraints for the minimize routine.
+        
+        Each constraint is needed in a dictionary, which needs following
+        entries:
+            
+            type: str
+                Constraint type: 'eq' for equality, 'ineq' for inequality.
+            
+            fun: callable
+                The function defining the constraint.
+        
+        The given functions must be of form ``f(u, y, t)``. Equality 
+        constraints means the constraint function result is to be zero,
+        inequality constraints means constraint function result is to be
+        non-negative. This is merely a wrapper for the constraint functionality
+        in ``scipy.optimize.minimize``. See its documentation for further 
+        details.
+        
+        Args:
+            constraints: Either a dict or iterable of dicts which looks as
+                described above.
+        
+        """
+        self._constraints = constraints
+        if type(self._constraints) is not list:
+            self._constraints = [self._constraints]
+        for constraint in self._constraints:
+            # remove unnecessary parameters for constraint functions
+            f = constraint["fun"]
+            constraint["fun"] = self._create_constraint_wrapper(f)
+    
+    def _create_constraint_wrapper(self, func):
+        
+        return lambda m, u, y, t : func(u, y, t)
+    
     def set_cost_func(self, func: Callable) -> None:
         """Sets the cost functional which is used for the MPC.
         
@@ -562,7 +611,8 @@ class Mpc(object):
             A tuple (t, y, u) where t is the time vector, y is the vector
             of system outputs and u the vector of system inputs.
         """
-        
+        # use Nelder-Mead as default method if none is specified
+        method = self._minimizer_kwargs.pop("method", "Nelder-Mead")
         # Add additional data for simulation after time.
         # This is needed because we have to simulate for time_horizon even
         # after normal simulation time is reached.
@@ -582,20 +632,21 @@ class Mpc(object):
             y_d_frame = np.ndarray((len(y), len(time_frame))) 
             u_frame = np.ones((len(u), len(time_frame)))
             for j in range(len(u_frame)):
-                u_frame[j] *= u[j][-1]
+                u_frame[j] *= u[j][i-1]
             for j in  range(len(y_d)):
                 y_frame[j] = y[j][i:len(time_frame)+i]
                 y_d_frame[j] = y_d_ext[j][i:len(time_frame)+i]
+            # add still missing information for constraints
+            for constraint in self._constraints:
+                constraint["args"] = (u_frame, y_frame, time_frame)
             res = spop.minimize(self._cost_func_wrapper, u_0,
-                               (sys, y_d_frame, y_frame, u_frame, time_frame), 
-                               *self._minimizer_args, **self._minimizer_kwargs)
+                               (sys, y_d_frame, y_frame, u_frame, time_frame),
+                               constraints=self._constraints, method=method, 
+                               **self._minimizer_kwargs)
             if not res.success:
                 # This sometimes happens when response is static or getting 
                 # unstable, continue anyways, but warn user.
-                msg = ("Minimizing failed with following message:\n%s\n"
-                       "You might want to try a different minimizing method,"
-                       " e.g. Nelder-Mead. If this persists, but simulation"
-                       " results are ok, feel free to ignore this warning.") % (
+                msg = ("Minimizing failed with following message:\n%s") % (
                     res.message)
                 warnings.warn(RuntimeWarning(msg))
                 u[j][i] = u[j][i-1]
