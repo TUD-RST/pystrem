@@ -31,7 +31,7 @@ class FsrModel(object):
     A FsrModel represents a dynamic system just with its step response.
     That means to create an instance of this class, a step response of a dynamic
     system is needed. This can either be done by using for example the
-    control module, or by importing a step response taken from a real system.
+    control module, or by importing a step response from a real system.
     
     You can then connect FsrModels like you would do with other systems. For
     that you can use :func:`serial`, :func:`parallel`,
@@ -181,7 +181,8 @@ class FsrModel(object):
             self, t: Iterable[float], u: Iterable[float]) -> (bool, str):
         """ Validates t and u input."""
         if len(t) != len(u):
-            msg = "Given 't' and 'u' dimensions do not match."
+            msg = ("Given t and u dimensions do not match: len(t)=%d, "
+                   "len(u)=%d") % (len(t), len(u))
             return False, msg
         for i in range(1, len(t)):
             if not math.isclose(t[i] - t[i - 1], self._dt, rel_tol=1e-3):
@@ -557,8 +558,11 @@ class Mpc(object):
             constraint["fun"] = self._create_constraint_wrapper(f)
     
     def _create_constraint_wrapper(self, func):
+        """ Creates a wrapper around func so no unused parameters are
+        passed."""
         
-        return lambda m, u, y, t : func(u, y, t)
+        def f(m, u, y, t): func(u, y, t)
+        return f
     
     def set_cost_func(self, func: Callable) -> None:
         """Sets the cost functional which is used for the MPC.
@@ -603,24 +607,66 @@ class Mpc(object):
                 Must fit system dimensions. Each entry has same length as time.
             time_horizon: This is the time horizon the MPC simulates the 
                 system with. Generally, if this time is shorter the control 
-                strategy is more aggressive. Also this time is generally close 
-                to the rise time of the resulting response, if it is stable. 
+                strategy is more aggressive.
             time: Time vector.
             
         Returns:
             A tuple (t, y, u) where t is the time vector, y is the vector
             of system outputs and u the vector of system inputs.
         """
-        # use Nelder-Mead as default method if none is specified
-        method = self._minimizer_kwargs.pop("method", "Nelder-Mead")
+        sys = np.array(sys)
+        if sys.shape == ():
+            # This means a single FsrModel was passed.
+            # A wrapper array is needed for it.
+            sys_wrapper = np.ndarray((1, 1), FsrModel)
+            sys_wrapper[0] = sys
+            sys = sys_wrapper
+        for i in range(len(sys)):
+            for j in range(len(sys[i])):
+                if not isinstance(sys[i][j], FsrModel):
+                    msg = ("Unsupported type: Got %s at position "
+                           "(%d, %d).") % (type(sys[i][j]), i, j)
+                    raise TypeError(msg)
+        t_dt = time[1] - time[0]
+        th_dt = time_horizon[1] - time_horizon[0]
+        if t_dt != th_dt:
+            msg = ("Timebase of time (%f) and time horizon (%f) do not "
+                   "match.") % (t_dt, th_dt)
+            raise ValueError(msg)
+        y_d = np.array(y_d)
+        try:
+            y_d.shape[1]
+        except IndexError:
+            # This means we reveived a single y_d array.
+            # Create a wrapper array for it.
+            y_d_wrapper = np.ndarray((1, len(y_d)))
+            y_d_wrapper[0] = y_d
+            y_d = y_d_wrapper
+        if len(y_d) != len(sys):
+            msg = ("y_d dimensions do not fit system: len(y_d)=%d, "
+                   "len(sys)=%d.") % (len(y_d), len(sys))
+            raise ValueError(msg)
+        for i in range(len(y_d)):
+            if len(y_d[i]) != len(time):
+                msg = ("Desired output %d has wrong length: %d, "
+                       "expected %d") % (i, len(y_d[i]), len(time))
+                raise ValueError(msg)
+        min_kwargs = self._minimizer_kwargs.copy()
+        if not "method" in min_kwargs:
+            if len(self._constraints) == 0:
+                # No constraints, use Nelder-Mead as default.
+                min_kwargs["method"] = "Nelder-Mead"
+            else:
+                # Constraints, use COBYLA as default.
+                min_kwargs["method"] = "COBYLA"
+        
         # Add additional data for simulation after time.
         # This is needed because we have to simulate for time_horizon even
         # after normal simulation time is reached.
         y_d_ext = np.ndarray((len(y_d), len(time)+len(time_horizon)))
         for i in range(len(y_d)):
             y_d_ext[i] = np.r_[y_d[i], np.ones(len(time_horizon))*y_d[i][-1]]
-        dt = time[1] - time[0]
-        ext_time = np.arange(0, time[-1]+time_horizon[-1], dt)  # see above
+        ext_time = np.arange(0, time[-1]+time_horizon[-1]+2*t_dt, t_dt)
         y = np.zeros((len(sys), len(ext_time)))
         u = np.zeros((len(sys[0]), len(time)))
         u_0 = np.zeros(len(sys[0]))  # Initial guesses for minimized parameters
@@ -633,7 +679,7 @@ class Mpc(object):
             u_frame = np.ones((len(u), len(time_frame)))
             for j in range(len(u_frame)):
                 u_frame[j] *= u[j][i-1]
-            for j in  range(len(y_d)):
+            for j in  range(len(y_d_frame)):
                 y_frame[j] = y[j][i:len(time_frame)+i]
                 y_d_frame[j] = y_d_ext[j][i:len(time_frame)+i]
             # add still missing information for constraints
@@ -641,8 +687,8 @@ class Mpc(object):
                 constraint["args"] = (u_frame, y_frame, time_frame)
             res = spop.minimize(self._cost_func_wrapper, u_0,
                                (sys, y_d_frame, y_frame, u_frame, time_frame),
-                               constraints=self._constraints, method=method, 
-                               **self._minimizer_kwargs)
+                               constraints=self._constraints, 
+                               **min_kwargs)
             if not res.success:
                 # This sometimes happens when response is static or getting 
                 # unstable, continue anyways, but warn user.
@@ -657,7 +703,7 @@ class Mpc(object):
                 for k in range(len(row)):
                     step = np.ones(len(ext_time)-i)*res.x[k]
                     model = row[k]
-                    _, out = forced_response(model, ext_time[i:], step)
+                    _, out = forced_response(model, ext_time[:len(ext_time)-i], step)
                     for n in range(len(out)):
                         y[j][i+n] += out[n]
         y_out = np.ndarray((len(y), len(time)))
@@ -668,7 +714,7 @@ class Mpc(object):
                 
     def _cost_func_wrapper(self, m, sys, y_d_frame, y_frame, u_frame, time_frame) -> float:
         """A wrapper which takes care of everything around the cost functional"""
-        
+
         y_mpc = np.zeros((len(sys), len(time_frame)))
         for i in range(len(sys)):
             row = sys[i]
