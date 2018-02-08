@@ -555,14 +555,7 @@ class Mpc(object):
         for constraint in self._constraints:
             # remove unnecessary parameters for constraint functions
             f = constraint["fun"]
-            constraint["fun"] = self._create_constraint_wrapper(f)
-    
-    def _create_constraint_wrapper(self, func):
-        """ Creates a wrapper around func so no unused parameters are
-        passed."""
-        
-        def f(m, u, y, t): func(u, y, t)
-        return f
+            constraint["fun"] = lambda m, u, y, t: f(u, y, t)
     
     def set_cost_func(self, func: Callable) -> None:
         """Sets the cost functional which is used for the MPC.
@@ -613,6 +606,11 @@ class Mpc(object):
         Returns:
             A tuple (t, y, u) where t is the time vector, y is the vector
             of system outputs and u the vector of system inputs.
+        
+        Raises:
+            ValueError: if input argument are not compatible with each other or
+                the system.
+            TypeError: if input argument is of wrong type.
         """
         sys = np.array(sys)
         if sys.shape == ():
@@ -695,7 +693,6 @@ class Mpc(object):
                 msg = ("Minimizing failed with following message:\n%s") % (
                     res.message)
                 warnings.warn(RuntimeWarning(msg))
-                u[j][i] = u[j][i-1]
             for j in range(len(res.x)):
                 u[j][i] = u[j][i-1] + res.x[j]
             for j in range(len(sys)):
