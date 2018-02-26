@@ -17,20 +17,31 @@
 
 
 import numpy as np
+import scipy.optimize as spop
 import collections
 import math
 import warnings
-from typing import Iterable, IO, Union, Tuple
+from typing import Iterable, IO, Union, Tuple, Callable, Dict
 import csv
 
 
 class FsrModel(object):
-    """Handles simulation of Finite-Step-Response models.
+    """Represents a Finite-Step-Response model.
 
-    FsrModel contains all necessary information to simulate with
-    FSR models. It is intended to be used exactly as a transfer function
-    would be. TODO: expand this
+    A FsrModel represents a dynamic system just with its step response.
+    That means to create an instance of this class, a step response of a dynamic
+    system is needed. This can either be done by using for example the
+    control module, or by importing a step response from a real system.
+    
+    You can then connect FsrModels like you would do with other systems. For
+    that you can use :func:`serial`, :func:`parallel`,
+    :func:`feedback` or its corresponding operator overloads.
+    
+    When you have created a FsrModel either combined from other models or 
+    otherwise, you can simulate with it. Do that by calling either
+    :func:`step_response` or :func:`forced_response`.
     """
+    _unstable_allowed = False
 
     def __init__(self, y: Iterable[float], t: Iterable[float],
                  u: Iterable[float]=None, optimize: bool=True) -> None:
@@ -91,10 +102,37 @@ class FsrModel(object):
         # used in method simulate_step, stores input
         self._sim_du = []
         # used in method simulate_step, stores input delta
+        # detect if system is unstable
+        if not math.isclose((y[-1]-y[-2]) / self._dt, 0., abs_tol=1e-2):
+            if FsrModel._unstable_allowed:
+                msg = ("Your system appears to be unstable. Simulating with "
+                       "unstable systems is very likely to cause simulation "
+                       "errors.")
+                warnings.warn(UnstableSystemWarning(msg))
+            else: 
+                msg = ("Your system appears to be unstable. If you still want "
+                       "to simulate you can call FsrModel.allow_unstable(True)"
+                       " to simulate anyways.")
+                raise UnstableSystemException(msg)
         self._is_optimized = False
         if optimize:
             self.optimize()
 
+    @staticmethod
+    def allow_unstable(allow: bool) -> None:
+        """Allow or disallow unstable systems.
+        
+        Unstable systems are currently not supported and will in most cases 
+        cause errors in simulation. Normally an exception is raised whenever 
+        an unstable system is created, by allowing them this is changed to a 
+        warning.
+        
+        Args:
+            allow: Setting this to True will warn you when an unstable system 
+                is created, setting this to False will raise an exception.
+        """
+        FsrModel._unstable_allowed = allow
+    
     def _find_step_in_u(self, u: Iterable[float]) -> int:
         """ Looks for the index where the jump in _u occurs."""
         u_max = abs(max(u))
@@ -103,7 +141,7 @@ class FsrModel(object):
                 return i
         return 0
 
-    def optimize(self, delta: float=0.01):
+    def optimize(self, delta: float=0.01) -> None:
         """Crops the underlying response according to delta.
         
         This method crops y, t and u to show only the dynamics of the system.
@@ -129,15 +167,10 @@ class FsrModel(object):
                 current_delta = (abs((val - static_val) / static_val)) * 100.
                 if (current_delta > delta):
                     if ((i <= 1) or (i < (0.01 * len(self._t)))):
-                        msg=("Detected end of dynamic which is very close" 
-                            " to end of response while optimizing. This might"
-                            " mean your system is unstable. Unstable systems"
-                            " will very likely lead to simulation errors.")
-                        warnings.warn(RuntimeWarning(msg))
+                        # only a small amount would be cut, better not cut it
                         return
                     crop_idx = len(self._y) - i + 1
                     self._y = self._y[:crop_idx]
-                    self._y[-1] = static_val  # this keeps static value the same
                     self._u = self._u[:crop_idx]
                     self._t = self._t[:crop_idx]
                     return
@@ -148,7 +181,8 @@ class FsrModel(object):
             self, t: Iterable[float], u: Iterable[float]) -> (bool, str):
         """ Validates t and u input."""
         if len(t) != len(u):
-            msg = "Given 't' and 'u' dimensions do not match."
+            msg = ("Given t and u dimensions do not match: len(t)=%d, "
+                   "len(u)=%d") % (len(t), len(u))
             return False, msg
         for i in range(1, len(t)):
             if not math.isclose(t[i] - t[i - 1], self._dt, rel_tol=1e-3):
@@ -170,11 +204,12 @@ class FsrModel(object):
 
         This is a wrapper for FsrModels __truediv__ method. This system is 
         in forwards direction and other in backwards direction. Both systems 
-        timebases must match. Returned system will be normalized to a 
+        time bases must match. Returned system will be normalized to a 
         step of amplitude 1.
     
-        Examples:
-            ``sys3 = sys1.feedback(sys2)  # same as sys1 / sys2``
+        Examples::
+            `
+            ys3 = sys1.feedback(sys2)  # same as sys1 / sys2
     
         Args:
             other: Other system.
@@ -392,8 +427,8 @@ class FsrModel(object):
         """Clears simulation memory.
         
         Use this method if you want use this model instance for multiple 
-        simulations with simulate_step method. This makes sure there is nothing
-        left from the last simulation.
+        simulations with :func:`simulate_step`. This makes sure there is 
+        nothing left from the last simulation.
         """
         self._sim_du = []
         self._sim_u = []
@@ -414,6 +449,296 @@ class FsrModel(object):
         # array[:] creates a copy of that array. We don't want to return
         # references here.
         return (self._y[:], self._u[:], self._t[:])
+
+
+class Mpc(object):
+    """A class representing a model-predictive-controller.
+    
+    This class allows to simulate a MPC with a SISO or MIMO system.
+    The most important parameters of a MPC are the time horizon in which
+    the MPC simulates the given system, and the cost functional.
+    
+    There are only rough guidelines to decide what the time horizon should
+    be. Generally speaking, a shorter time horizon leads to a more aggressive
+    control strategy and thus higher controller output signals. If the MPC 
+    manages to keep the system stable, the time horizon also equates roughly
+    to the rise time of the system response.
+    
+    A cost functional can be specified, with :func:`set_cost_func`.
+    If no cost functional is set, a default is used.
+    This function is defined as follows::
+        
+       def _default_cost_func(self, u: Iterable, y_d: Iterable,
+                           y: Iterable, time: Iterable) -> float:
+        
+            J = 0
+            for i in range(len(time)):
+                t = time[i]
+                y_cost = 0
+                for j in range(len(y_d)):
+                    y_cost += (y_d[j][i]-y[j][i])**2
+                J += y_cost*t**2
+            return J
+            
+    This cost functional should in most cases generate good results.
+    
+    The minimizing routine used is ``scipy.optimize.minimize``. You can affect
+    its behavior by setting additional parameters with 
+    :func:`set_minimizer_kwargs`. For further details see its documentation.
+    """
+    
+    
+    def __init__(self,cost_func: Callable=None):
+        """ Creates a model-predictive controller from parameters.
+        
+        Args:
+            cost_func (Optional): A function representing a cost functional. 
+                Must be of form ``f(u, y_d, y, t)``, where u is controller 
+                output, y_d is desired plant output, y is plant output and t is
+                the time vector.
+        """
+        
+        self._cost_func = cost_func if cost_func else self._default_cost_func
+        self._input_func = None
+        self._minimizer_kwargs = {}
+        self._constraints = []
+        
+    def set_minimizer_kwargs(self, **kwargs) -> None:
+        """Sets additional parameters of the underlying minimize routine.
+        
+        The used routine is ``scipy.optimize.minimize``. For further details 
+        see its documentation. The ``args``, ``bounds`` and ``constraints`` 
+        parameters can not be set. For ``constraints`` use 
+        :func:`set_constraints`.
+        """
+        if "args" in kwargs:
+            msg = ("'args' parameter can not be set. This certainly won't do "
+                   "what you wanted it to do.")
+            raise ValueError(msg)
+        if "constraints" in kwargs:
+            msg = ("'constraints' parameter can not be set with this function."
+             " Use set_constraints instead.")
+            raise ValueError(msg)
+        if "bounds" in kwargs:
+            msg = ("'bounds' parameter can not be set. You should instead "
+                   "use constraints.")
+            raise ValueError(msg)
+        self._minimizer_kwargs = kwargs
+        
+    def set_constraints(self, constraints: Iterable[Dict]) -> None:
+        """Sets equality and inequality constraints for the minimize routine.
+        
+        Each constraint is needed in a dictionary, which needs following
+        entries:
+            
+            type: str
+                Constraint type: 'eq' for equality, 'ineq' for inequality.
+            
+            fun: callable
+                The function defining the constraint.
+        
+        The given functions must be of form ``f(u, y, t)``. Equality 
+        constraints means the constraint function result is to be zero,
+        inequality constraints means constraint function result is to be
+        non-negative. This is merely a wrapper for the constraint functionality
+        in ``scipy.optimize.minimize``. See its documentation for further 
+        details.
+        
+        Args:
+            constraints: Either a dict or iterable of dicts which looks as
+                described above.
+        
+        """
+        self._constraints = constraints
+        if type(self._constraints) is not list:
+            self._constraints = [self._constraints]
+        for constraint in self._constraints:
+            # remove unnecessary parameters for constraint functions
+            f = constraint["fun"]
+            constraint["fun"] = lambda m, u, y, t: f(u, y, t)
+    
+    def set_cost_func(self, func: Callable) -> None:
+        """Sets the cost functional which is used for the MPC.
+        
+        The given function must be of form ``f(u, y_d, y, t)``. All input 
+        parameters are vectors of fitting dimension derived from the system. 
+        u is controller output, y_d plant desired output, y plant output and t 
+        time.
+                
+        Args:
+            func: The cost functional.
+        """
+        self._cost_func = func    
+    
+    def simulate(self, sys, y_d: Iterable, time_horizon: Iterable[float], 
+                 time: Iterable[float]) -> Tuple[Iterable, Iterable, Iterable]:
+        """Simulates a given system connected with the MPC.
+        
+        This simulation combines a model-predictive-control algorithm with a
+        simulation of the system. The MPC tries to have system outputs match 
+        ``y_d``. 
+        
+        Examples:
+            Our example system has 2 inputs and 2 outputs, with 4 FsrModels 
+            describing each I/O behavior. A time vector t and a time horizon
+            vector t_horizon are given::
+            
+                sys = numpy.ndarray((2, 2), pystrem.FsrModel)
+                sys[0][0] = model_11  # output 1 from input 1
+                sys[0][1] = model_12  # output 1 from input 2
+                sys[1][1] = model_22  # output 2 from input 2
+                sys[1][0] = model_21  # output 2 from input 1
+                mpc = pystrem.Mpc()
+                y_d = numpy.ndarray((2, len(t)))
+                y_d[0] = numpy.ones(len(t))   # step for input 1
+                y_d[1] = numpy.zeros(len(t))  # and nothing for input 2
+                t, y, u = mpc.simulate(sys, y_d, t_horizon, t)
+            
+        Args:
+            sys: System to simulate.
+            y_d: Desired outputs for each system output.
+                Must fit system dimensions. Each entry has same length as time.
+            time_horizon: This is the time horizon the MPC simulates the 
+                system with. Generally, if this time is shorter the control 
+                strategy is more aggressive.
+            time: Time vector.
+            
+        Returns:
+            A tuple (t, y, u) where t is the time vector, y is the vector
+            of system outputs and u the vector of system inputs.
+        
+        Raises:
+            ValueError: if input argument are not compatible with each other or
+                the system.
+            TypeError: if input argument is of wrong type.
+        """
+        sys = np.array(sys)
+        if sys.shape == ():
+            # This means a single FsrModel was passed.
+            # A wrapper array is needed for it.
+            sys_wrapper = np.ndarray((1, 1), FsrModel)
+            sys_wrapper[0] = sys
+            sys = sys_wrapper
+        for i in range(len(sys)):
+            for j in range(len(sys[i])):
+                if not isinstance(sys[i][j], FsrModel):
+                    msg = ("Unsupported type: Got %s at position "
+                           "(%d, %d).") % (type(sys[i][j]), i, j)
+                    raise TypeError(msg)
+        t_dt = time[1] - time[0]
+        th_dt = time_horizon[1] - time_horizon[0]
+        if t_dt != th_dt:
+            msg = ("Timebase of time (%f) and time horizon (%f) do not "
+                   "match.") % (t_dt, th_dt)
+            raise ValueError(msg)
+        y_d = np.array(y_d)
+        try:
+            y_d.shape[1]
+        except IndexError:
+            # This means we reveived a single y_d array.
+            # Create a wrapper array for it.
+            y_d_wrapper = np.ndarray((1, len(y_d)))
+            y_d_wrapper[0] = y_d
+            y_d = y_d_wrapper
+        if len(y_d) != len(sys):
+            msg = ("y_d dimensions do not fit system: len(y_d)=%d, "
+                   "len(sys)=%d.") % (len(y_d), len(sys))
+            raise ValueError(msg)
+        for i in range(len(y_d)):
+            if len(y_d[i]) != len(time):
+                msg = ("Desired output %d has wrong length: %d, "
+                       "expected %d") % (i, len(y_d[i]), len(time))
+                raise ValueError(msg)
+        min_kwargs = self._minimizer_kwargs.copy()
+        if not "method" in min_kwargs:
+            if len(self._constraints) == 0:
+                # No constraints, use Nelder-Mead as default.
+                min_kwargs["method"] = "Nelder-Mead"
+            else:
+                # Constraints, use COBYLA as default.
+                min_kwargs["method"] = "COBYLA"
+        
+        # Add additional data for simulation after time.
+        # This is needed because we have to simulate for time_horizon even
+        # after normal simulation time is reached.
+        y_d_ext = np.ndarray((len(y_d), len(time)+len(time_horizon)))
+        for i in range(len(y_d)):
+            y_d_ext[i] = np.r_[y_d[i], np.ones(len(time_horizon))*y_d[i][-1]]
+        ext_time = np.arange(0, time[-1]+time_horizon[-1]+2*t_dt, t_dt)
+        y = np.zeros((len(sys), len(ext_time)))
+        u = np.zeros((len(sys[0]), len(time)))
+        u_0 = np.zeros(len(sys[0]))  # Initial guesses for minimized parameters
+        # Is 0 because we describe it as the differences from last value.
+        for i in range(len(time)):
+            # Creating frames of all relevant data for the cost functional
+            time_frame = ext_time[i:i+len(time_horizon)]
+            y_frame = np.ndarray((len(y), len(time_frame)))
+            y_d_frame = np.ndarray((len(y), len(time_frame))) 
+            u_frame = np.ones((len(u), len(time_frame)))
+            for j in range(len(u_frame)):
+                u_frame[j] *= u[j][i-1]
+            for j in  range(len(y_d_frame)):
+                y_frame[j] = y[j][i:len(time_frame)+i]
+                y_d_frame[j] = y_d_ext[j][i:len(time_frame)+i]
+            # add still missing information for constraints
+            for constraint in self._constraints:
+                constraint["args"] = (u_frame, y_frame, time_frame)
+            res = spop.minimize(self._cost_func_wrapper, u_0,
+                               (sys, y_d_frame, y_frame, u_frame, time_frame),
+                               constraints=self._constraints, 
+                               **min_kwargs)
+            if not res.success:
+                # This sometimes happens when response is static or getting 
+                # unstable, continue anyways, but warn user.
+                msg = ("Minimizing failed with following message:\n%s") % (
+                    res.message)
+                warnings.warn(RuntimeWarning(msg))
+            for j in range(len(res.x)):
+                u[j][i] = u[j][i-1] + res.x[j]
+            for j in range(len(sys)):
+                row = sys[j]
+                for k in range(len(row)):
+                    step = np.ones(len(ext_time)-i)*res.x[k]
+                    model = row[k]
+                    _, out = forced_response(model, ext_time[:len(ext_time)-i], step)
+                    for n in range(len(out)):
+                        y[j][i+n] += out[n]
+        y_out = np.ndarray((len(y), len(time)))
+        for i in range(len(y)):
+            y_out[i] = y[i][:len(time)]  # only show y for requested time
+        return (time, y_out, u)
+            
+                
+    def _cost_func_wrapper(self, m, sys, y_d_frame, y_frame, u_frame, time_frame) -> float:
+        """A wrapper which takes care of everything around the cost functional"""
+
+        y_mpc = np.zeros((len(sys), len(time_frame)))
+        for i in range(len(sys)):
+            row = sys[i]
+            for j in range(len(row)):
+                u_frame[j] += m[j]
+                step = np.ones(len(time_frame))*m[j]
+                model = row[j]
+                _, out = forced_response(model, time_frame, step)
+                y_mpc[i] += out
+        y_mpc += y_frame
+        return self._cost_func(u_frame, y_d_frame, y_mpc, time_frame)
+        
+                
+                
+    
+    def _default_cost_func(self, u: Iterable, y_d: Iterable,
+                           y: Iterable, time: Iterable) -> float:
+        """The default cost functional used if none is given"""
+        
+        J = 0
+        for i in range(len(time)):
+            t = time[i]
+            y_cost = 0
+            for j in range(len(y_d)):
+                y_cost += (y_d[j][i]-y[j][i])**2
+            J += y_cost*t**2
+        return J
 
 
 def step_response(sys: FsrModel, t: Iterable[float]=None,
@@ -498,14 +823,14 @@ def parallel(sys1: FsrModel, sys2: FsrModel, sign: int=1) -> FsrModel:
     """Returns the parallel connection of sys1 and sys2.
 
     This is a wrapper for FsrModels __add__ and __sub__ methods.
-    Both systems timebases must match. Returned system will be
+    Both systems time bases must match. Returned system will be
     normalized to a step of amplitude 1. If subtraction instead of addition is
-    wanted, use sign=-1.
+    wanted, use ``sign=-1``.
 
-    Examples: 
-        ``sys3 = parallel(sys1, sys2)  # same as sys3 = sys1 + sys2``
-
-        ``sys3 = parallel(sys1, sys2, -1)  # same as sys3 = sys1 - sys2``
+    Examples::
+        
+        sys3 = parallel(sys1, sys2)  # same as sys3 = sys1 + sys2
+        sys3 = parallel(sys1, sys2, -1)  # same as sys3 = sys1 - sys2
 
     Args:
         sys1: First system.
@@ -529,11 +854,12 @@ def parallel(sys1: FsrModel, sys2: FsrModel, sign: int=1) -> FsrModel:
 def series(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
     """Returns the serial connection of sys1 and sys2.
 
-    This is a wrapper for FsrModels __mul__ method. Both systems timebases must
-    match. Returned system will be normalized to a step of amplitude 1.
+    This is a wrapper for FsrModels __mul__ method. Both systems time bases 
+    must match. Returned system will be normalized to a step of amplitude 1.
 
-    Examples:
-        ``sys3 = series(sys1, sys2)  # same as sys3 = sys1 * sys2``
+    Examples::
+    
+        sys3 = series(sys1, sys2)  # same as sys3 = sys1 * sys2
 
     Args:
         sys1: First system.
@@ -551,12 +877,13 @@ def series(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
 def feedback(sys1: FsrModel, sys2: FsrModel, sign: int=-1) -> FsrModel:
     """Returns the feedback connection of sys1 and sys2.
 
-    This is a wrapper for FsrModels __truediv__ method. sys1 is in forwards
-    direction and sys2 in backwards direction. Both systems timebases 
+    This is a wrapper for FsrModels __truediv__ method. ``sys1`` is in forwards
+    direction and ``sys2`` in backwards direction. Both systems time bases 
     must match. Returned system will be normalized to a step of amplitude 1.
 
-    Examples:
-        ``sys3 = feedback(sys1, sys2)  # same as sys1 / sys2``
+    Examples::
+    
+        sys3 = feedback(sys1, sys2)  # same as sys1 / sys2
 
     Args:
         sys1: First system.
@@ -580,8 +907,10 @@ def import_csv(filehandle: IO, delimiter: str=',',
                 quotechar: str='"') -> FsrModel:
     """Imports a system from a CSV file.
 
+    Format is "time, input, output" in each line.
     Expects a file handle in read-mode. CSV dialect can be specified by
-    delimiter and quotechar parameters. Imported models will not be optimized.
+    ``delimiter`` and ``quotechar`` parameters. 
+    Imported models will not be optimized.
 
     Args:
         filehandle: Handle of the file.
@@ -619,7 +948,7 @@ def export_csv(model: FsrModel, filehandle: IO, delimiter: str=',',
     """Exports a system to a CSV file.
 
     Expects a file handle of the file in write-mode. CSV dialect can be
-    specified with delimiter and quotechar parameters.
+    specified with ``delimiter`` and ``quotechar`` parameters.
 
     Args:
         model: Model to export.
@@ -643,3 +972,11 @@ def export_csv(model: FsrModel, filehandle: IO, delimiter: str=',',
         msg = "Expected type <class 'FsrModel'>, got type %s." % (
             str(type(model)))
         raise TypeError(msg)
+    
+
+class UnstableSystemException(Exception):
+    pass
+
+
+class UnstableSystemWarning(Warning):
+    pass

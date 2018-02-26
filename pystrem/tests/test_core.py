@@ -62,10 +62,8 @@ class CoreTest(unittest.TestCase):
         
         sys = ctrl.tf([100], [50, 1000, 150, 0])  # IT2
         _, o = ctrl.step_response(sys, self.time)
-        m = ps.FsrModel(o, t=self.time, optimize=False)
-        _, y = ps.forced_response(m, self.t, self.u)
-        _, o, _ = ctrl.forced_response(sys, self.t, self.u)
-        self.assertTrue(np.allclose(y, o, rtol=1e-2), "it2 response broke")
+        self.assertRaises(ps.UnstableSystemException, 
+            lambda: ps.FsrModel(o, t=self.time, optimize=False))
    
     def test_crazy_system_forced_response(self):
         # numerator: (s+50)(s-2)((s+8)²+45)(s²+100))
