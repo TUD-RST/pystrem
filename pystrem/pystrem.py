@@ -734,7 +734,7 @@ class Mpc(object):
 
 def step_response(sys: FsrModel, t: Iterable[float] = None,
                   amplitude: float = 1) -> Tuple[
-                  Iterable[float], Iterable[float]]:
+    Iterable[float], Iterable[float]]:
     """Simulates the the step response of given system.
 
     Args:
@@ -751,12 +751,17 @@ def step_response(sys: FsrModel, t: Iterable[float] = None,
             or the system.
         TypeError: if argument sys is of wrong type.
     """
-    if t is not None:
-        u = amplitude * np.ones(len(t))
-    else:
-        _, _, t = sys.get_model_info()
-        u = amplitude * np.ones(len(t))
-    t, y = forced_response(sys, t, u)
+
+    y, _, sys_t = sys.get_model_info()
+    if t is None:
+        t = sys_t
+    if len(sys_t) < len(t):
+        # append static values to y, if t is longer than y
+        y_extension = np.ones(len(t) - len(sys_t)) * y[-1]
+        y = np.r_[y, y_extension]
+    elif len(sys_t) > len(t):
+        y = y[:t]
+    y = y * amplitude
     return t, y
 
 
@@ -780,7 +785,7 @@ def forced_response(sys: FsrModel, t: Iterable[float], u: Iterable[float]) \
     """
     try:
         sys_y, sys_u, sys_t = sys.get_model_info()
-    except:
+    except NotImplementedError:
         msg = ("Unsupported type %s for parameter sys." % (
             str(type(sys))))
         raise TypeError(msg)
@@ -929,7 +934,7 @@ def import_csv(filehandle: IO, delimiter: str = ',',
             t.append(float(row[0]))
             u.append(float(row[1]))
             y.append(float(row[2]))
-    except:
+    except Exception:
         msg = ("Something went wrong while reading the file. The format in the "
                "file might be unsupported.")
         raise IOError(msg) from None
