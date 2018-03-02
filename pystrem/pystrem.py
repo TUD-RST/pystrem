@@ -355,7 +355,6 @@ class FsrModel(object):
             # TODO: Find a way to calculate exact size or guess it reliably.
             length = len(self._y) + len(p_out)
             y = np.zeros(length)
-            y[0] = 0
             # Calculate new model output. Formula is as follows:
             # y[k] = y[k-1] + (u_tilde - (y[k-1]-y[k-2])*p_out[2] -
             # (y[k-2]-y[k-3])*p_out[3] - ...) / p_out[1]
@@ -374,13 +373,6 @@ class FsrModel(object):
                                       (y[i - j] - y[i - j - 1])
                 y[i] += right_side
             time = self._dt * np.arange(length)
-            # if system has differentiating properties,
-            # this fixes the value @t=0
-            if not math.isclose(0., (self._y[0] / self._u_0) /
-                    (1 + other._y[0] / other._u_0)):
-                y = y[1:]
-                time = time[:-1]
-            # TODO: this is a hack, find mathematical solution or explanation
             return FsrModel(y=y, t=time)
         elif isinstance(other, int) or isinstance(other, float):
             sys2 = FsrModel([other, other], t=[0, self._dt])
