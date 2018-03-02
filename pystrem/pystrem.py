@@ -48,7 +48,8 @@ class FsrModel(object):
         """Creates FsrModel from given parameters.
 
         u should be a step, otherwise simulation accuracy will be bad. y is
-        the resulting step response of the system to input u.
+        the resulting step response of the system to input u. Internally, the
+        step response is normalized to an input of amplitude 1.
         
         Args:
             y: Step response of the system.
@@ -85,8 +86,8 @@ class FsrModel(object):
         self._y = self._y[idx:]
         self._u = self._u[idx:]
         self._t = self._t[idx:]
-        self._u_0 = self._u[-1]
-        # considered step amplitude for all purposes, important for calculation
+        self._y = self._y * self._u[-1]  # normalize to step of amplitude 1
+        self._u = self._u * self._u[-1]  # normalize to step of amplitude 1
         self._dt = self._t[1] - self._t[0]
         # model step size
         for i in range(1, len(self._t)):
@@ -236,9 +237,8 @@ class FsrModel(object):
             if not ok:
                 raise ValueError(msg)
             other_y, other_u, other_t = other.get_model_info()
-            other_u_0 = other_u[-1]
-            y1 = self._y / self._u_0
-            y2 = other_y / other_u_0
+            y1 = self._y
+            y2 = other_y
             if len(self._t) > len(other_t):
                 y = np.zeros(len(self._t))
                 y2_static = y2[-1]
@@ -277,9 +277,8 @@ class FsrModel(object):
             if not ok:
                 raise ValueError(msg)
             other_y, other_u, other_t = other.get_model_info()
-            other_u_0 = other_u[-1]
-            y1 = self._y / self._u_0
-            y2 = other_y / other_u_0
+            y1 = self._y
+            y2 = other_y
             if len(self._t) > len(other_t):
                 y = np.zeros(len(self._t))
                 y2_static = y2[-1]
@@ -317,7 +316,7 @@ class FsrModel(object):
             ok, msg = self._validate_model_compatibility(other)
             if not ok:
                 raise ValueError(msg)
-            y1 = self._y / self._u_0
+            y1 = self._y
             _, _, other_t = other.get_model_info()
             time = self._dt * range(len(self._t) + len(other_t))
             u = np.zeros(len(time))
@@ -348,7 +347,7 @@ class FsrModel(object):
             ok, msg = self._validate_model_compatibility(other)
             if not ok:
                 raise ValueError(msg)
-            u_tilde = self._y / self._u_0
+            u_tilde = self._y
             p = (1 + (self * other))
             p_out, _, _ = p.get_model_info()
             # This is just a wild guess.
@@ -785,7 +784,6 @@ def forced_response(sys: FsrModel, t: Iterable[float], u: Iterable[float]) \
         msg = ("Unsupported type %s for parameter sys." % (
             str(type(sys))))
         raise TypeError(msg)
-    sys_u_0 = sys_u[-1]
     ok, msg = sys.validate_input(t, u)
     if not ok:
         raise ValueError(msg)
@@ -798,9 +796,9 @@ def forced_response(sys: FsrModel, t: Iterable[float], u: Iterable[float]) \
     # y[k] = (u[k]-u[k-1])*_y[1] + (u[k-1]-u[k-2])*_y[2] + ...
     for _ in t:
         if t_idx != 0:
-            du_rel = (u[t_idx] - u[t_idx - 1]) / sys_u_0
+            du_rel = (u[t_idx] - u[t_idx - 1])
         else:
-            du_rel = u[t_idx] / sys_u_0
+            du_rel = u[t_idx]
         # Whenever we add a value to our buffer we need to remember the
         # ones thrown out of it.
         if c_buf[0] != 0:
@@ -819,8 +817,7 @@ def parallel(sys1: FsrModel, sys2: FsrModel, sign: int = 1) -> FsrModel:
     """Returns the parallel connection of sys1 and sys2.
 
     This is a wrapper for FsrModels __add__ and __sub__ methods.
-    Both systems time bases must match. Returned system will be
-    normalized to a step of amplitude 1. If subtraction instead of addition is
+    Both systems time bases must match. If subtraction instead of addition is
     wanted, use ``sign=-1``.
 
     Examples::
@@ -851,7 +848,7 @@ def series(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
     """Returns the serial connection of sys1 and sys2.
 
     This is a wrapper for FsrModels __mul__ method. Both systems time bases 
-    must match. Returned system will be normalized to a step of amplitude 1.
+    must match.
 
     Examples::
     
@@ -874,8 +871,8 @@ def feedback(sys1: FsrModel, sys2: FsrModel, sign: int = -1) -> FsrModel:
     """Returns the feedback connection of sys1 and sys2.
 
     This is a wrapper for FsrModels __truediv__ method. ``sys1`` is in forwards
-    direction and ``sys2`` in backwards direction. Both systems time bases 
-    must match. Returned system will be normalized to a step of amplitude 1.
+    direction and ``sys2`` in backwards direction. Both systems time bases
+    must match.
 
     Examples::
     
