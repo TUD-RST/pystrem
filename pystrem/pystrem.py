@@ -461,17 +461,17 @@ class Mpc(object):
     If no cost functional is set, a default is used.
     This function is defined as follows::
         
-       def _default_cost_func(self, u: Iterable, y_d: Iterable,
+       def _default_cost_func(u: Iterable, y_d: Iterable,
                            y: Iterable, time: Iterable) -> float:
         
-            J = 0
+            j = 0
             for i in range(len(time)):
                 t = time[i]
                 y_cost = 0
                 for j in range(len(y_d)):
                     y_cost += (y_d[j][i]-y[j][i])**2
-                J += y_cost*t**2
-            return J
+                j += y_cost*t**2
+            return j
             
     This cost functional should in most cases generate good results.
     
@@ -490,7 +490,7 @@ class Mpc(object):
                 the time vector.
         """
 
-        self._cost_func = cost_func if cost_func else self._default_cost_func
+        self._cost_func = cost_func if cost_func else Mpc._default_cost_func
         self._input_func = None
         self._minimizer_kwargs = {}
         self._constraints = []
@@ -690,10 +690,10 @@ class Mpc(object):
             for j in range(len(sys)):
                 row = sys[j]
                 for k in range(len(row)):
-                    step = np.ones(len(ext_time) - i) * res.x[k]
                     model = row[k]
-                    _, out = forced_response(model,
-                                             ext_time[:len(ext_time) - i], step)
+                    _, out = step_response(model,
+                                           ext_time[:len(ext_time) - i],
+                                           res.x[k])
                     for n in range(len(out)):
                         y[j][i + n] += out[n]
         y_out = np.ndarray((len(y), len(time)))
@@ -711,14 +711,14 @@ class Mpc(object):
             row = sys[i]
             for j in range(len(row)):
                 u_frame[j] += m[j]
-                step = np.ones(len(time_frame)) * m[j]
                 model = row[j]
-                _, out = forced_response(model, time_frame, step)
+                _, out = step_response(model, time_frame, m[j])
                 y_mpc[i] += out
         y_mpc += y_frame
         return self._cost_func(u_frame, y_d_frame, y_mpc, time_frame)
 
-    def _default_cost_func(self, u: Iterable, y_d: Iterable,
+    @staticmethod
+    def _default_cost_func(u: Iterable, y_d: Iterable,
                            y: Iterable, time: Iterable) -> float:
         """The default cost functional used if none is given"""
 
@@ -734,7 +734,8 @@ class Mpc(object):
 
 def step_response(sys: FsrModel, t: Iterable[float] = None,
                   amplitude: float = 1) -> Tuple[
-    Iterable[float], Iterable[float]]:
+                                                 Iterable[float],
+                                                 Iterable[float]]:
     """Simulates the the step response of given system.
 
     Args:
@@ -760,7 +761,7 @@ def step_response(sys: FsrModel, t: Iterable[float] = None,
         y_extension = np.ones(len(t) - len(sys_t)) * y[-1]
         y = np.r_[y, y_extension]
     elif len(sys_t) > len(t):
-        y = y[:t]
+        y = y[:len(t)]
     y = y * amplitude
     return t, y
 
