@@ -786,7 +786,7 @@ def forced_response(sys: FsrModel, t: Iterable[float], u: Iterable[float]) \
     """
     try:
         sys_y, sys_u, sys_t = sys.get_model_info()
-    except NotImplementedError:
+    except AttributeError:
         msg = ("Unsupported type %s for parameter sys." % (
             str(type(sys))))
         raise TypeError(msg)
