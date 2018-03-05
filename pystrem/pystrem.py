@@ -356,7 +356,7 @@ class FsrModel(object):
             y = np.zeros(length)
             # Calculate new model output. Formula is as follows:
             # y[k] = y[k-1] + (u_tilde - (y[k-1]-y[k-2])*p_out[2] -
-            # (y[k-2]-y[k-3])*p_out[3] - ...) / p_out[1]
+            # (y[k-2]-y[k-3])*p_out[3] - ...) / p_out[0]
             for i in range(1, length):
                 y[i] = y[i - 1]
                 if i < len(u_tilde):
@@ -365,10 +365,10 @@ class FsrModel(object):
                     right_side = u_tilde[-1]
                 for j in range(1, i):
                     if j < len(p_out) - 1:
-                        right_side -= p_out[j + 1] / p_out[1] * \
+                        right_side -= p_out[j + 1] / p_out[0] * \
                                       (y[i - j] - y[i - j - 1])
                     else:
-                        right_side -= p_out[-1] / p_out[1] * \
+                        right_side -= p_out[-1] / p_out[0] * \
                                       (y[i - j] - y[i - j - 1])
                 y[i] += right_side
             time = self._dt * np.arange(length)
