@@ -23,6 +23,9 @@ import math
 import warnings
 from typing import Iterable, IO, Union, Tuple, Callable, Dict
 import csv
+import pyximport; pyximport.install()
+import optimisations
+
 
 
 class FsrModel(object):
@@ -817,6 +820,19 @@ def forced_response(sys: FsrModel, t: Iterable[float], u: Iterable[float]) \
         y[t_idx] = step_out + out_of_buf_value
         t_idx += 1
     return t, y
+
+def forced_response_cython_wrapper(sys: FsrModel, t: Iterable[float],
+                                   u: Iterable[float]):
+    try:
+        sys_y, _, sys_t = sys.get_model_info()
+    except AttributeError:
+        msg = ("Unsupported type %s for parameter sys." % (
+            str(type(sys))))
+        raise TypeError(msg)
+    ok, msg = sys.validate_input(t, u)
+    if not ok:
+        raise ValueError(msg)
+    return optimisations.forced_response(sys_y, sys_t, t, u)
 
 
 def parallel(sys1: FsrModel, sys2: FsrModel, sign: int = 1) -> FsrModel:
