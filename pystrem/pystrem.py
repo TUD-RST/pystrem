@@ -23,7 +23,7 @@ import math
 import warnings
 from typing import Iterable, IO, Union, Tuple, Callable, Dict
 import csv
-import pyximport; pyximport.install()
+import pyximport; pyximport.install(setup_args={"include_dirs":np.get_include()},reload_support=True)
 import optimisations
 
 
