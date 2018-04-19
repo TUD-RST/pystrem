@@ -44,11 +44,12 @@ class FsrModel(object):
     _unstable_allowed = False
 
     def __init__(self, y: Iterable[float], t: Iterable[float],
-                 u: Iterable[float]=None, optimize: bool=True) -> None:
+                 u: Iterable[float] = None, optimize: bool = True) -> None:
         """Creates FsrModel from given parameters.
 
         u should be a step, otherwise simulation accuracy will be bad. y is
-        the resulting step response of the system to input u.
+        the resulting step response of the system to input u. Internally, the
+        step response is normalized to an input of amplitude 1.
         
         Args:
             y: Step response of the system.
@@ -85,12 +86,12 @@ class FsrModel(object):
         self._y = self._y[idx:]
         self._u = self._u[idx:]
         self._t = self._t[idx:]
-        self._u_0 = self._u[-1]
-        # considered step amplitude for all purposes, important for calculation
+        self._y = self._y * self._u[-1]  # normalize to step of amplitude 1
+        self._u = self._u * self._u[-1]  # normalize to step of amplitude 1
         self._dt = self._t[1] - self._t[0]
         # model step size
         for i in range(1, len(self._t)):
-            dt = self._t[i] - self._t[i-1]
+            dt = self._t[i] - self._t[i - 1]
             if not math.isclose(self._dt, dt, rel_tol=1e-3):
                 msg = "t is not equidistant."
                 raise ValueError(msg)
@@ -103,13 +104,13 @@ class FsrModel(object):
         self._sim_du = []
         # used in method simulate_step, stores input delta
         # detect if system is unstable
-        if not math.isclose((y[-1]-y[-2]) / self._dt, 0., abs_tol=1e-2):
+        if not math.isclose((y[-1] - y[-2]) / self._dt, 0., abs_tol=1e-2):
             if FsrModel._unstable_allowed:
                 msg = ("Your system appears to be unstable. Simulating with "
                        "unstable systems is very likely to cause simulation "
                        "errors.")
                 warnings.warn(UnstableSystemWarning(msg))
-            else: 
+            else:
                 msg = ("Your system appears to be unstable. If you still want "
                        "to simulate you can call FsrModel.allow_unstable(True)"
                        " to simulate anyways.")
@@ -132,7 +133,7 @@ class FsrModel(object):
                 is created, setting this to False will raise an exception.
         """
         FsrModel._unstable_allowed = allow
-    
+
     def _find_step_in_u(self, u: Iterable[float]) -> int:
         """ Looks for the index where the jump in _u occurs."""
         u_max = abs(max(u))
@@ -141,7 +142,7 @@ class FsrModel(object):
                 return i
         return 0
 
-    def optimize(self, delta: float=0.01) -> None:
+    def optimize(self, delta: float = 0.01) -> None:
         """Crops the underlying response according to delta.
         
         This method crops y, t and u to show only the dynamics of the system.
@@ -165,8 +166,8 @@ class FsrModel(object):
                     return
                 val = self._y[-i]
                 current_delta = (abs((val - static_val) / static_val)) * 100.
-                if (current_delta > delta):
-                    if ((i <= 1) or (i < (0.01 * len(self._t)))):
+                if current_delta > delta:
+                    if (i <= 1) or (i < (0.01 * len(self._t))):
                         # only a small amount would be cut, better not cut it
                         return
                     crop_idx = len(self._y) - i + 1
@@ -177,7 +178,7 @@ class FsrModel(object):
         else:
             return
 
-    def _validate_input(
+    def validate_input(
             self, t: Iterable[float], u: Iterable[float]) -> (bool, str):
         """ Validates t and u input."""
         if len(t) != len(u):
@@ -193,13 +194,15 @@ class FsrModel(object):
 
     def _validate_model_compatibility(self, other) -> (bool, str):
         """ Validates compatibility of two models."""
-        delta_time = other._t[1] - other._t[0]
+        other_model_info = other.get_model_info()
+        other_t = other_model_info[2]
+        delta_time = other_t[1] - other_t[0]
         if delta_time != self._dt:
             return False, "Step size of given models is not the same."
         else:
             return True, ""
 
-    def feedback(self, other: 'FsrModel', sign: int=-1) -> 'FsrModel':
+    def feedback(self, other: 'FsrModel', sign: int = -1) -> 'FsrModel':
         """Returns the feedback connection of this system and other.
 
         This is a wrapper for FsrModels __truediv__ method. This system is 
@@ -234,9 +237,8 @@ class FsrModel(object):
             if not ok:
                 raise ValueError(msg)
             other_y, other_u, other_t = other.get_model_info()
-            other_u_0 = other_u[-1]
-            y1 = self._y / self._u_0
-            y2 = other_y / other_u_0
+            y1 = self._y
+            y2 = other_y
             if len(self._t) > len(other_t):
                 y = np.zeros(len(self._t))
                 y2_static = y2[-1]
@@ -257,7 +259,7 @@ class FsrModel(object):
             new_y = np.zeros(len(self._y))
             for i in range(len(new_y)):
                 new_y[i] = self._y[i] + other
-            return FsrModel(new_y, t=self._t, u=self._u, 
+            return FsrModel(new_y, t=self._t, u=self._u,
                             optimize=False)
         else:
             msg = ("Unsupported type %s." % (
@@ -275,9 +277,8 @@ class FsrModel(object):
             if not ok:
                 raise ValueError(msg)
             other_y, other_u, other_t = other.get_model_info()
-            other_u_0 = other_u[-1]
-            y1 = self._y / self._u_0
-            y2 = other_y / other_u_0
+            y1 = self._y
+            y2 = other_y
             if len(self._t) > len(other_t):
                 y = np.zeros(len(self._t))
                 y2_static = y2[-1]
@@ -298,7 +299,7 @@ class FsrModel(object):
             new_y = np.zeros(len(self._y))
             for i in range(len(new_y)):
                 new_y[i] = self._y[i] - other
-            return FsrModel(new_y, t=self._t, u=self._u, 
+            return FsrModel(new_y, t=self._t, u=self._u,
                             optimize=False)
         else:
             msg = ("Unsupported type %s." % (
@@ -315,10 +316,9 @@ class FsrModel(object):
             ok, msg = self._validate_model_compatibility(other)
             if not ok:
                 raise ValueError(msg)
-            y1 = self._y / self._u_0
+            y1 = self._y
             _, _, other_t = other.get_model_info()
-            time = self._dt * \
-                range(len(self._t) + len(other_t))
+            time = self._dt * range(len(self._t) + len(other_t))
             u = np.zeros(len(time))
             for i in range(len(y1)):
                 u[i] = y1[i]
@@ -347,17 +347,16 @@ class FsrModel(object):
             ok, msg = self._validate_model_compatibility(other)
             if not ok:
                 raise ValueError(msg)
-            u_tilde = self._y / self._u_0
+            u_tilde = self._y
             p = (1 + (self * other))
             p_out, _, _ = p.get_model_info()
             # This is just a wild guess.
             # TODO: Find a way to calculate exact size or guess it reliably.
             length = len(self._y) + len(p_out)
             y = np.zeros(length)
-            y[0] = 0
             # Calculate new model output. Formula is as follows:
             # y[k] = y[k-1] + (u_tilde - (y[k-1]-y[k-2])*p_out[2] -
-            # (y[k-2]-y[k-3])*p_out[3] - ...) / p_out[1]
+            # (y[k-2]-y[k-3])*p_out[3] - ...) / p_out[0]
             for i in range(1, length):
                 y[i] = y[i - 1]
                 if i < len(u_tilde):
@@ -366,19 +365,13 @@ class FsrModel(object):
                     right_side = u_tilde[-1]
                 for j in range(1, i):
                     if j < len(p_out) - 1:
-                        right_side -= p_out[j + 1] / p_out[1] * \
-                            (y[i - j] - y[i - j - 1])
+                        right_side -= p_out[j + 1] / p_out[0] * \
+                                      (y[i - j] - y[i - j - 1])
                     else:
-                        right_side -= p_out[-1] / p_out[1] * \
-                            (y[i - j] - y[i - j - 1])
+                        right_side -= p_out[-1] / p_out[0] * \
+                                      (y[i - j] - y[i - j - 1])
                 y[i] += right_side
             time = self._dt * np.arange(length)
-            # if system has differentiating properties, this fixes the value @t=0
-            if not math.isclose(0., (self._y[0] / self._u_0) / 
-                                (1 + other._y[0] / other._u_0)):
-                y = y[1:]
-                time = time[:-1]
-            # TODO: this is a hack, find mathematical solution or explanation
             return FsrModel(y=y, t=time)
         elif isinstance(other, int) or isinstance(other, float):
             sys2 = FsrModel([other, other], t=[0, self._dt])
@@ -389,8 +382,8 @@ class FsrModel(object):
             raise TypeError(msg)
 
     def __rtruediv__(self, other) -> 'FsrModel':
-        
-        sys2 = FsrModel(np.array([other, other]), t=np.array([0, self._dt]), 
+
+        sys2 = FsrModel(np.array([other, other]), t=np.array([0, self._dt]),
                         optimize=False)
         return sys2 / self
 
@@ -413,16 +406,16 @@ class FsrModel(object):
             self._sim_du.append(u)
         else:
             last_u = self._sim_u[-1]
-            self._sim_du.append(u-last_u)
+            self._sim_du.append(u - last_u)
         self._sim_u.append(u)
         out = 0
         for i in range(len(self._sim_du)):
             if i < len(self._y):
-                out += self._sim_du[-i-1] * self._y[i]
+                out += self._sim_du[-i - 1] * self._y[i]
             else:
-                out += self._sim_du[-i-1] * self._y[-1]
+                out += self._sim_du[-i - 1] * self._y[-1]
         return out
-    
+
     def clear_sim_mem(self) -> None:
         """Clears simulation memory.
         
@@ -448,7 +441,7 @@ class FsrModel(object):
         """
         # array[:] creates a copy of that array. We don't want to return
         # references here.
-        return (self._y[:], self._u[:], self._t[:])
+        return self._y[:], self._u[:], self._t[:]
 
 
 class Mpc(object):
@@ -468,17 +461,17 @@ class Mpc(object):
     If no cost functional is set, a default is used.
     This function is defined as follows::
         
-       def _default_cost_func(self, u: Iterable, y_d: Iterable,
+       def _default_cost_func(u: Iterable, y_d: Iterable,
                            y: Iterable, time: Iterable) -> float:
         
-            J = 0
+            j = 0
             for i in range(len(time)):
                 t = time[i]
                 y_cost = 0
                 for j in range(len(y_d)):
                     y_cost += (y_d[j][i]-y[j][i])**2
-                J += y_cost*t**2
-            return J
+                j += y_cost*t**2
+            return j
             
     This cost functional should in most cases generate good results.
     
@@ -486,9 +479,8 @@ class Mpc(object):
     its behavior by setting additional parameters with 
     :func:`set_minimizer_kwargs`. For further details see its documentation.
     """
-    
-    
-    def __init__(self,cost_func: Callable=None):
+
+    def __init__(self, cost_func: Callable = None):
         """ Creates a model-predictive controller from parameters.
         
         Args:
@@ -497,12 +489,12 @@ class Mpc(object):
                 output, y_d is desired plant output, y is plant output and t is
                 the time vector.
         """
-        
-        self._cost_func = cost_func if cost_func else self._default_cost_func
+
+        self._cost_func = cost_func if cost_func else Mpc._default_cost_func
         self._input_func = None
         self._minimizer_kwargs = {}
         self._constraints = []
-        
+
     def set_minimizer_kwargs(self, **kwargs) -> None:
         """Sets additional parameters of the underlying minimize routine.
         
@@ -517,14 +509,14 @@ class Mpc(object):
             raise ValueError(msg)
         if "constraints" in kwargs:
             msg = ("'constraints' parameter can not be set with this function."
-             " Use set_constraints instead.")
+                   " Use set_constraints instead.")
             raise ValueError(msg)
         if "bounds" in kwargs:
             msg = ("'bounds' parameter can not be set. You should instead "
                    "use constraints.")
             raise ValueError(msg)
         self._minimizer_kwargs = kwargs
-        
+
     def set_constraints(self, constraints: Iterable[Dict]) -> None:
         """Sets equality and inequality constraints for the minimize routine.
         
@@ -556,7 +548,7 @@ class Mpc(object):
             # remove unnecessary parameters for constraint functions
             f = constraint["fun"]
             constraint["fun"] = lambda m, u, y, t: f(u, y, t)
-    
+
     def set_cost_func(self, func: Callable) -> None:
         """Sets the cost functional which is used for the MPC.
         
@@ -568,9 +560,9 @@ class Mpc(object):
         Args:
             func: The cost functional.
         """
-        self._cost_func = func    
-    
-    def simulate(self, sys, y_d: Iterable, time_horizon: Iterable[float], 
+        self._cost_func = func
+
+    def simulate(self, sys, y_d: Iterable, time_horizon: Iterable[float],
                  time: Iterable[float]) -> Tuple[Iterable, Iterable, Iterable]:
         """Simulates a given system connected with the MPC.
         
@@ -650,99 +642,100 @@ class Mpc(object):
                        "expected %d") % (i, len(y_d[i]), len(time))
                 raise ValueError(msg)
         min_kwargs = self._minimizer_kwargs.copy()
-        if not "method" in min_kwargs:
+        if "method" not in min_kwargs:
             if len(self._constraints) == 0:
                 # No constraints, use Nelder-Mead as default.
                 min_kwargs["method"] = "Nelder-Mead"
             else:
                 # Constraints, use COBYLA as default.
                 min_kwargs["method"] = "COBYLA"
-        
+
         # Add additional data for simulation after time.
         # This is needed because we have to simulate for time_horizon even
         # after normal simulation time is reached.
-        y_d_ext = np.ndarray((len(y_d), len(time)+len(time_horizon)))
+        y_d_ext = np.ndarray((len(y_d), len(time) + len(time_horizon)))
         for i in range(len(y_d)):
-            y_d_ext[i] = np.r_[y_d[i], np.ones(len(time_horizon))*y_d[i][-1]]
-        ext_time = np.arange(0, time[-1]+time_horizon[-1]+2*t_dt, t_dt)
+            y_d_ext[i] = np.r_[y_d[i], np.ones(len(time_horizon)) * y_d[i][-1]]
+        ext_time = np.arange(0, time[-1] + time_horizon[-1] + 2 * t_dt, t_dt)
         y = np.zeros((len(sys), len(ext_time)))
         u = np.zeros((len(sys[0]), len(time)))
         u_0 = np.zeros(len(sys[0]))  # Initial guesses for minimized parameters
         # Is 0 because we describe it as the differences from last value.
         for i in range(len(time)):
             # Creating frames of all relevant data for the cost functional
-            time_frame = ext_time[i:i+len(time_horizon)]
+            time_frame = ext_time[i:i + len(time_horizon)]
             y_frame = np.ndarray((len(y), len(time_frame)))
-            y_d_frame = np.ndarray((len(y), len(time_frame))) 
+            y_d_frame = np.ndarray((len(y), len(time_frame)))
             u_frame = np.ones((len(u), len(time_frame)))
             for j in range(len(u_frame)):
-                u_frame[j] *= u[j][i-1]
-            for j in  range(len(y_d_frame)):
-                y_frame[j] = y[j][i:len(time_frame)+i]
-                y_d_frame[j] = y_d_ext[j][i:len(time_frame)+i]
+                u_frame[j] *= u[j][i - 1]
+            for j in range(len(y_d_frame)):
+                y_frame[j] = y[j][i:len(time_frame) + i]
+                y_d_frame[j] = y_d_ext[j][i:len(time_frame) + i]
             # add still missing information for constraints
             for constraint in self._constraints:
                 constraint["args"] = (u_frame, y_frame, time_frame)
             res = spop.minimize(self._cost_func_wrapper, u_0,
-                               (sys, y_d_frame, y_frame, u_frame, time_frame),
-                               constraints=self._constraints, 
-                               **min_kwargs)
+                                (sys, y_d_frame, y_frame, u_frame, time_frame),
+                                constraints=self._constraints,
+                                **min_kwargs)
             if not res.success:
                 # This sometimes happens when response is static or getting 
                 # unstable, continue anyways, but warn user.
-                msg = ("Minimizing failed with following message:\n%s") % (
+                msg = "Minimizing failed with following message:\n%s" % (
                     res.message)
                 warnings.warn(RuntimeWarning(msg))
             for j in range(len(res.x)):
-                u[j][i] = u[j][i-1] + res.x[j]
+                u[j][i] = u[j][i - 1] + res.x[j]
             for j in range(len(sys)):
                 row = sys[j]
                 for k in range(len(row)):
-                    step = np.ones(len(ext_time)-i)*res.x[k]
                     model = row[k]
-                    _, out = forced_response(model, ext_time[:len(ext_time)-i], step)
+                    _, out = step_response(model,
+                                           ext_time[:len(ext_time) - i],
+                                           res.x[k])
                     for n in range(len(out)):
-                        y[j][i+n] += out[n]
+                        y[j][i + n] += out[n]
         y_out = np.ndarray((len(y), len(time)))
         for i in range(len(y)):
             y_out[i] = y[i][:len(time)]  # only show y for requested time
-        return (time, y_out, u)
-            
-                
-    def _cost_func_wrapper(self, m, sys, y_d_frame, y_frame, u_frame, time_frame) -> float:
-        """A wrapper which takes care of everything around the cost functional"""
+        return time, y_out, u
+
+    def _cost_func_wrapper(self, m, sys, y_d_frame, y_frame, u_frame,
+                           time_frame) -> float:
+        """A wrapper which takes care of everything around the cost
+        functional """
 
         y_mpc = np.zeros((len(sys), len(time_frame)))
         for i in range(len(sys)):
             row = sys[i]
             for j in range(len(row)):
                 u_frame[j] += m[j]
-                step = np.ones(len(time_frame))*m[j]
                 model = row[j]
-                _, out = forced_response(model, time_frame, step)
+                _, out = step_response(model, time_frame, m[j])
                 y_mpc[i] += out
         y_mpc += y_frame
         return self._cost_func(u_frame, y_d_frame, y_mpc, time_frame)
-        
-                
-                
-    
-    def _default_cost_func(self, u: Iterable, y_d: Iterable,
+
+    @staticmethod
+    def _default_cost_func(u: Iterable, y_d: Iterable,
                            y: Iterable, time: Iterable) -> float:
         """The default cost functional used if none is given"""
-        
-        J = 0
+
+        j = 0
         for i in range(len(time)):
             t = time[i]
             y_cost = 0
             for j in range(len(y_d)):
-                y_cost += (y_d[j][i]-y[j][i])**2
-            J += y_cost*t**2
-        return J
+                y_cost += (y_d[j][i] - y[j][i]) ** 2
+            j += y_cost * t ** 2
+        return j
 
 
-def step_response(sys: FsrModel, t: Iterable[float]=None,
-                  amplitude: float=1) -> Tuple[Iterable[float], Iterable[float]]:
+def step_response(sys: FsrModel, t: Iterable[float] = None,
+                  amplitude: float = 1) -> Tuple[
+                                                 Iterable[float],
+                                                 Iterable[float]]:
     """Simulates the the step response of given system.
 
     Args:
@@ -759,19 +752,26 @@ def step_response(sys: FsrModel, t: Iterable[float]=None,
             or the system.
         TypeError: if argument sys is of wrong type.
     """
-    if t is not None:
-        u = amplitude * np.ones(len(t))
-    else:
-        _, _, t = sys.get_model_info()
-        u = amplitude * np.ones(len(t))
-    t, y = forced_response(sys, t, u)
+
+    y, _, sys_t = sys.get_model_info()
+    if t is None:
+        t = sys_t
+    if len(sys_t) < len(t):
+        # append static values to y, if t is longer than y
+        y_extension = np.ones(len(t) - len(sys_t)) * y[-1]
+        y = np.r_[y, y_extension]
+    elif len(sys_t) > len(t):
+        y = y[:len(t)]
+    y = y * amplitude
     return t, y
+
 
 def forced_response(sys: FsrModel, t: Iterable[float], u: Iterable[float]) \
         -> Tuple[Iterable[float], Iterable[float]]:
     """Simulates the response of this system to given input.
 
     Args:
+        sys: The system.
         t: Time vector.
         u: Input vector.
 
@@ -786,12 +786,11 @@ def forced_response(sys: FsrModel, t: Iterable[float], u: Iterable[float]) \
     """
     try:
         sys_y, sys_u, sys_t = sys.get_model_info()
-    except:
+    except AttributeError:
         msg = ("Unsupported type %s for parameter sys." % (
             str(type(sys))))
         raise TypeError(msg)
-    sys_u_0 = sys_u[-1]
-    ok, msg = sys._validate_input(t, u)
+    ok, msg = sys.validate_input(t, u)
     if not ok:
         raise ValueError(msg)
     c_buf = collections.deque(
@@ -803,9 +802,9 @@ def forced_response(sys: FsrModel, t: Iterable[float], u: Iterable[float]) \
     # y[k] = (u[k]-u[k-1])*_y[1] + (u[k-1]-u[k-2])*_y[2] + ...
     for _ in t:
         if t_idx != 0:
-            du_rel = (u[t_idx] - u[t_idx - 1]) / sys_u_0
+            du_rel = (u[t_idx] - u[t_idx - 1])
         else:
-            du_rel = u[t_idx] / sys_u_0
+            du_rel = u[t_idx]
         # Whenever we add a value to our buffer we need to remember the
         # ones thrown out of it.
         if c_buf[0] != 0:
@@ -819,12 +818,12 @@ def forced_response(sys: FsrModel, t: Iterable[float], u: Iterable[float]) \
         t_idx += 1
     return t, y
 
-def parallel(sys1: FsrModel, sys2: FsrModel, sign: int=1) -> FsrModel:
+
+def parallel(sys1: FsrModel, sys2: FsrModel, sign: int = 1) -> FsrModel:
     """Returns the parallel connection of sys1 and sys2.
 
     This is a wrapper for FsrModels __add__ and __sub__ methods.
-    Both systems time bases must match. Returned system will be
-    normalized to a step of amplitude 1. If subtraction instead of addition is
+    Both systems time bases must match. If subtraction instead of addition is
     wanted, use ``sign=-1``.
 
     Examples::
@@ -855,7 +854,7 @@ def series(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
     """Returns the serial connection of sys1 and sys2.
 
     This is a wrapper for FsrModels __mul__ method. Both systems time bases 
-    must match. Returned system will be normalized to a step of amplitude 1.
+    must match.
 
     Examples::
     
@@ -874,12 +873,12 @@ def series(sys1: FsrModel, sys2: FsrModel) -> FsrModel:
     return sys1 * sys2
 
 
-def feedback(sys1: FsrModel, sys2: FsrModel, sign: int=-1) -> FsrModel:
+def feedback(sys1: FsrModel, sys2: FsrModel, sign: int = -1) -> FsrModel:
     """Returns the feedback connection of sys1 and sys2.
 
     This is a wrapper for FsrModels __truediv__ method. ``sys1`` is in forwards
-    direction and ``sys2`` in backwards direction. Both systems time bases 
-    must match. Returned system will be normalized to a step of amplitude 1.
+    direction and ``sys2`` in backwards direction. Both systems time bases
+    must match.
 
     Examples::
     
@@ -903,8 +902,8 @@ def feedback(sys1: FsrModel, sys2: FsrModel, sign: int=-1) -> FsrModel:
         return sys1 / sys2
 
 
-def import_csv(filehandle: IO, delimiter: str=',',
-                quotechar: str='"') -> FsrModel:
+def import_csv(filehandle: IO, delimiter: str = ',',
+               quotechar: str = '"') -> FsrModel:
     """Imports a system from a CSV file.
 
     Format is "time, input, output" in each line.
@@ -927,7 +926,7 @@ def import_csv(filehandle: IO, delimiter: str=',',
     """
 
     reader = csv.reader(filehandle, delimiter=delimiter, quotechar=quotechar,
-			lineterminator='\n')
+                        lineterminator='\n')
     t = []
     u = []
     y = []
@@ -936,15 +935,15 @@ def import_csv(filehandle: IO, delimiter: str=',',
             t.append(float(row[0]))
             u.append(float(row[1]))
             y.append(float(row[2]))
-    except:
+    except Exception:
         msg = ("Something went wrong while reading the file. The format in the "
                "file might be unsupported.")
         raise IOError(msg) from None
     return FsrModel(y, t=t, optimize=False)
 
 
-def export_csv(model: FsrModel, filehandle: IO, delimiter: str=',', 
-               quotechar: str='"') -> None:
+def export_csv(model: FsrModel, filehandle: IO, delimiter: str = ',',
+               quotechar: str = '"') -> None:
     """Exports a system to a CSV file.
 
     Expects a file handle of the file in write-mode. CSV dialect can be
@@ -972,7 +971,7 @@ def export_csv(model: FsrModel, filehandle: IO, delimiter: str=',',
         msg = "Expected type <class 'FsrModel'>, got type %s." % (
             str(type(model)))
         raise TypeError(msg)
-    
+
 
 class UnstableSystemException(Exception):
     pass
